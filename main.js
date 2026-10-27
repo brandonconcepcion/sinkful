@@ -802,6 +802,8 @@ async function pullFromRemote() {
 }
 channel?.addEventListener('message', pullFromRemote);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) pullFromRemote(); });
+// The calendar script adds dishes to the Gist through the day: check for them while the page is open.
+setInterval(() => { if (!document.hidden && storage.mode === 'gist') pullFromRemote(); }, 5 * 60 * 1000);
 addEventListener('pagehide', () => {
   if (storage.backend && serialize() !== storage.lastSaved) flushSave(true);
 });
