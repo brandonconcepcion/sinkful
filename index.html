@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sinkful: a to-do list you scrub</title>
+  <link rel="stylesheet" href="style.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <canvas id="scene"></canvas>
+
+  <header class="hud top">
+    <button id="mute" class="icon-btn" title="Sound on"></button>
+    <button id="clear-all" class="icon-btn" title="Clear all: empty the sink and tub, put the rack away"><span data-icon="trash"></span></button>
+    <span id="save-status" class="save-status"></span>
+  </header>
+
+  <aside class="hud list">
+    <section class="col">
+      <h2><span><span data-icon="bubbles"></span> Soaking <span id="soak-count" class="count"></span></span><span id="soak-actions" class="links"><button id="soak-wash-all" class="link">wash all</button><button id="soak-take-out" class="link">take out</button></span></h2>
+      <ul id="soak-list"></ul>
+    </section>
+    <section class="col">
+      <h2><span>In the sink <span id="sink-count" class="count"></span></span><span id="sink-actions" class="links"><button id="sink-wash-all" class="link">wash all</button><button id="sink-clear" class="link danger">clear</button></span></h2>
+      <ul id="dish-list"></ul>
+    </section>
+    <section class="col">
+      <h2><span>Drying rack <span id="rack-count" class="count"></span></span><button id="put-away" class="link">put away</button></h2>
+      <ul id="done-list"></ul>
+    </section>
+  </aside>
+
+  <section id="inspect" class="hud inspect hidden">
+    <div class="badge-row">
+      <span id="i-size" class="badge"></span>
+      <span id="i-grime" class="badge"></span>
+    </div>
+    <div class="title-row"><h2 id="i-title"></h2><button id="i-edit" class="ghost small" title="Edit (E)"><span data-icon="edit"></span>Edit</button></div>
+    <p id="i-notes"></p>
+    <p id="i-soak" class="soak-note"></p>
+    <p class="hint">Click anywhere to set it down. Drag to turn it.<br /><kbd>Enter</kbd> done · <kbd>S</kbd> soak · <kbd>E</kbd> edit · <kbd>Esc</kbd> set down</p>
+    <div class="actions"><button id="i-toss" class="ghost danger">Toss this task</button></div>
+  </section>
+
+  <dialog id="add-dialog">
+    <form method="dialog" id="add-form">
+      <h2 id="dialog-title">Add a dish to the sink</h2>
+      <label>What needs doing?
+        <input name="title" required maxlength="80" placeholder="e.g. Reply to Sam about the offsite" autofocus />
+      </label>
+      <label>Notes
+        <textarea name="notes" rows="2" maxlength="300" placeholder="optional"></textarea>
+      </label>
+      <fieldset>
+        <legend>How big is it?</legend>
+        <div id="size-picker" class="picker"></div>
+      </fieldset>
+      <fieldset>
+        <legend>How urgent?</legend>
+        <div class="picker">
+          <label><input type="radio" name="grime" value="1" checked /><span>Rinse<small>whenever</small></span></label>
+          <label><input type="radio" name="grime" value="2" /><span>Crusty<small>soon</small></span></label>
+          <label><input type="radio" name="grime" value="3" /><span>Burnt-on<small>overdue</small></span></label>
+        </div>
+      </fieldset>
+      <div class="actions">
+        <button value="cancel" formnovalidate class="ghost">Cancel</button>
+        <button value="add" id="add-submit">Drop it in</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="tooltip" class="tooltip hidden"></div>
+  <div id="prop-label" class="prop-label hidden"><strong></strong><span>Drag to turn · click it again for a surprise · click away to put it back</span></div>
+  <button id="add-btn" title="Add a dish (N)"><span data-icon="plus"></span>Add a dish</button>
+  <div id="toast" class="toast hidden"><span id="toast-text"></span><button id="toast-action" class="link hidden"></button></div>
+  <div id="dish-actions" class="dish-actions hidden">
+    <button id="a-wash" class="act wash"><span data-icon="check"></span>Done</button>
+    <button id="a-soak" class="act soak"><span data-icon="bubbles"></span>Soak</button>
+    <button id="a-down" class="act down"><span data-icon="down"></span>Set down</button>
+  </div>
+
+  <div id="gate" class="gate hidden">
+    <form class="hud gate-card" autocomplete="on">
+      <h1>Sinkful</h1>
+      <p>Your sink is locked. Enter your password to start scrubbing.</p>
+      <input type="text" name="username" value="sinkful" autocomplete="username" hidden />
+      <input type="password" placeholder="Password" autocomplete="current-password" required />
+      <label class="gate-remember"><input type="checkbox" checked /> Remember this device</label>
+      <button type="submit">Unlock</button>
+      <div class="gate-error" role="alert"></div>
+    </form>
+  </div>
+
+  <footer class="credits">3D models: Kenney <a href="https://kenney.nl/assets/food-kit" target="_blank">Food Kit</a> &amp; <a href="https://kenney.nl/assets/furniture-kit" target="_blank">Furniture Kit</a> (CC0)</footer>
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>
