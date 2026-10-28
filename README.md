@@ -38,7 +38,9 @@ Use a separate data folder with `python3 server.py 5175 --data /tmp/sinkful-test
 
 Static site with no build step. Three.js loads from jsDelivr.
 Reset data in the console: `sinkful.reset()`.
-Watch a wash on load: `#wash` or `#wash-pot`. Slow motion: `sinkful.speed(0.25)`. Preview the finale: `sinkful.finale()`. Fast-forward soaking: `sinkful.ageSoak(4)`. Pick up a prop: `sinkful.hold('toaster')`.
+Watch a wash on load: `#wash` or `#wash-pot`. Slow motion: `sinkful.speed(0.25)`. Preview the finale: `sinkful.finale()`. Fast-forward soaking: `sinkful.ageSoak(4)`. Pick up a prop: `sinkful.hold('toaster')`. Performance: `sinkful.perf()` (draw calls, frame and hit-test cost), `sinkful.meshBreakdown()`.
+
+Rendering is on demand: nothing redraws while the scene is still, ambient tub motion redraws at 30 fps without redoing the shadow map, and static scenery, tub suds and each dish's grime are merged or instanced to keep draw calls low (~185 per frame with a full sink).
 
 ## Hosted copy (GitHub Pages)
 

@@ -7,6 +7,7 @@ import { BokehPass } from 'three/addons/postprocessing/BokehPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { FontLoader } from 'three/addons/loaders/FontLoader.js';
 import { TextGeometry } from 'three/addons/geometries/TextGeometry.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import * as sfx from './sfx.js';
 import { unlockCloud, forgetCloud } from './vault.js';
 
@@ -65,6 +66,7 @@ const renderer = new THREE.WebGLRenderer({ canvas, antialias: PIXEL_RATIO < 1.25
 renderer.setPixelRatio(PIXEL_RATIO);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.autoUpdate = false; // redrawn only on frames where something moved (see the render loop)
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 
 const scene = new THREE.Scene();
@@ -240,20 +242,53 @@ function speckleTexture() {
   tex.anisotropy = 4;
   return tex;
 }
-// Counter slabs get their own texture repeat so the speckle scale matches across slabs.
+// Counter slabs scale their UVs so the speckle size matches across slabs (and they can share a material).
 function counterBox(w, h, d, x, y, z) {
-  const mat = counterMat.clone();
-  mat.map = counterTex.clone();
-  mat.map.repeat.set(w / 3, d / 3);
-  return box(w, h, d, mat, x, y, z);
+  const geo = new THREE.BoxGeometry(w, h, d);
+  const uv = geo.attributes.uv;
+  for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * (w / 3), uv.getY(i) * (d / 3));
+  return addStatic(new THREE.Mesh(geo, counterMat), x, y, z);
 }
 
 function box(w, h, d, mat, x, y, z) {
-  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+  return addStatic(new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat), x, y, z);
+}
+
+// Scenery that never moves. Built as separate meshes for readability, then merged into one
+// mesh per material (mergeStatic), which cuts the draw calls per frame by about a hundred.
+const STATIC = [];
+function addStatic(m, x, y, z, { cast = true, receive = true } = {}) {
   m.position.set(x, y, z);
-  m.castShadow = m.receiveShadow = true;
+  m.castShadow = cast;
+  m.receiveShadow = receive;
   scene.add(m);
+  STATIC.push(m);
   return m;
+}
+function mergeStatic() {
+  const groups = new Map();
+  for (const m of STATIC) {
+    const key = `${m.material.uuid}|${m.castShadow}|${m.receiveShadow}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(m);
+  }
+  const used = new Set();
+  for (const list of groups.values()) {
+    if (list.length < 2) continue;
+    const geos = list.map((m) => {
+      m.updateMatrixWorld();
+      used.add(m.geometry);
+      return m.geometry.clone().applyMatrix4(m.matrixWorld);
+    });
+    const merged = new THREE.Mesh(mergeGeometries(geos), list[0].material);
+    merged.castShadow = list[0].castShadow;
+    merged.receiveShadow = list[0].receiveShadow;
+    for (const m of list) scene.remove(m);
+    for (const g of geos) g.dispose();
+    scene.add(merged);
+  }
+  for (const g of used) g.dispose();
+  STATIC.length = 0;
 }
 
 (function buildKitchen() {
@@ -285,19 +320,12 @@ function box(w, h, d, mat, x, y, z) {
   // Faucet: base, riser, arm reaching over the sink, downward spout.
   const fz = -SINK.d / 2 - 0.9;
   box(0.5, 0.2, 0.5, steel, 0, 0.1, fz);
-  const riser = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 2.4, 20), steel);
-  riser.position.set(0, 1.3, fz);
-  riser.castShadow = true;
-  scene.add(riser);
+  addStatic(new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 2.4, 20), steel), 0, 1.3, fz, { receive: false });
   const armLen = SPOUT.z - fz;
   const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, armLen, 20), steel);
   arm.rotation.x = Math.PI / 2;
-  arm.position.set(0, 2.5, fz + armLen / 2);
-  arm.castShadow = true;
-  scene.add(arm);
-  const nozzle = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.1, 0.25, 20), steel);
-  nozzle.position.set(SPOUT.x, SPOUT.y + 0.12, SPOUT.z);
-  scene.add(nozzle);
+  addStatic(arm, 0, 2.5, fz + armLen / 2, { receive: false });
+  addStatic(new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.1, 0.25, 20), steel), SPOUT.x, SPOUT.y + 0.12, SPOUT.z, { cast: false, receive: false });
 })();
 
 // Running water from the spout down to whatever it hits.
@@ -316,7 +344,9 @@ function setWater(on, bottomY = WASH_POS.y) {
 }
 
 const rackMat = new THREE.MeshStandardMaterial({ color: 0xdfe5e6, metalness: 0.55, roughness: 0.3 });
-const tubFoam = [];
+const tubFoam = []; // { x, z, r, phase } per suds blob, all drawn by tubFoamMesh
+let tubFoamMesh = null;
+const foamMatrix = new THREE.Matrix4(), foamPos = new THREE.Vector3(), foamScale = new THREE.Vector3(), noTurn = new THREE.Quaternion();
 (function buildTub() {
   const plastic = new THREE.MeshStandardMaterial({ color: 0x4f9fbf, roughness: 0.5 });
   const { x, z, w, d, h, wall } = TUB;
@@ -345,14 +375,11 @@ const tubFoam = [];
     const edge = Math.random() < 0.65;
     const fx = edge ? (Math.random() < 0.5 ? -1 : 1) * (iw / 2 - Math.random() * 0.4) : (Math.random() - 0.5) * iw * 0.9;
     const fz = edge && Math.random() < 0.5 ? (Math.random() < 0.5 ? -1 : 1) * (id / 2 - Math.random() * 0.4) : (Math.random() - 0.5) * id * 0.9;
-    const m = new THREE.Mesh(sphereGeoShared, sudsMat);
-    const r = 0.07 + Math.random() * 0.13;
-    m.scale.set(r, r * 0.6, r);
-    m.position.set(x + fx, TUB.water + 0.01, z + fz);
-    m.userData.phase = Math.random() * Math.PI * 2;
-    scene.add(m);
-    tubFoam.push(m);
+    tubFoam.push({ x: x + fx, z: z + fz, r: 0.07 + Math.random() * 0.13, phase: Math.random() * Math.PI * 2 });
   }
+  tubFoamMesh = new THREE.InstancedMesh(sphereGeoShared, sudsMat, tubFoam.length);
+  scene.add(tubFoamMesh);
+  bobFoam(0);
 })();
 
 (function buildRack() {
@@ -374,11 +401,10 @@ const tubFoam = [];
   const wire = (a, b) => {
     const m = new THREE.Mesh(wireGeo, rackMat);
     const dir = new THREE.Vector3().subVectors(b, a);
-    m.position.copy(a).addScaledVector(dir, 0.5);
+    const mid = a.clone().addScaledVector(dir, 0.5);
     m.quaternion.setFromUnitVectors(up, dir.clone().normalize());
     m.scale.y = dir.length();
-    m.castShadow = true;
-    scene.add(m);
+    addStatic(m, mid.x, mid.y, mid.z, { receive: false });
   };
   const L = x - w / 2, R = x + w / 2, B = z - d / 2, F = z + d / 2;
   const V = (px, py, pz) => new THREE.Vector3(px, py, pz);
@@ -396,6 +422,7 @@ const tubFoam = [];
     for (const off of [-0.32, 0.32]) wire(V(xx, top, row + off), V(xx, top + 0.6, row + off));
   }
 })();
+mergeStatic();
 
 // ---------------------------------------------------------------------------
 // Decor on the back counter. Each piece can be picked up and turned (see "Counter props"),
@@ -980,7 +1007,7 @@ function makeDish(task) {
     const hit = raycaster.intersectObject(model, true)[0];
     if (!hit) continue;
     const r = (0.05 + rng() * 0.08) * (task.type === 'fork' ? 0.45 : 1) * (0.8 + task.grime * 0.15);
-    const blob = new THREE.Mesh(sphereGeoShared, mat);
+    const blob = new THREE.Object3D(); // placeholder transform; drawn by the dish's grimeMesh
     const n = hit.face.normal.clone().transformDirection(hit.object.matrixWorld);
     blob.position.copy(hit.point);
     blob.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), n);
@@ -989,8 +1016,38 @@ function makeDish(task) {
     wrapper.add(blob);
     wrapper.userData.blobs.push(blob);
   }
+  // All of a dish's grime in one draw call (instead of one per blob).
+  const grimeMesh = new THREE.InstancedMesh(sphereGeoShared, mat, Math.max(1, wrapper.userData.blobs.length));
+  wrapper.userData.grimeMesh = grimeMesh;
+  wrapper.add(grimeMesh);
   applyLoosened(wrapper, task.loosened || 0);
+  syncGrime(wrapper);
+  grimeMesh.computeBoundingSphere(); // blobs only ever shrink or go away, so this stays valid
   return wrapper;
+}
+// Copy the blob placeholders' transforms into the instanced mesh (blobs removed mid-wash drop out).
+function syncGrime(w) {
+  const gm = w.userData.grimeMesh;
+  if (!gm) return;
+  let n = 0;
+  for (const b of w.userData.blobs) {
+    if (b.parent !== w) continue;
+    b.updateMatrix();
+    gm.setMatrixAt(n++, b.matrix);
+  }
+  gm.count = n;
+  gm.instanceMatrix.needsUpdate = true;
+}
+// Free what a dish owns on the GPU. Model geometry is shared with the templates, so it stays.
+function disposeDish(w) {
+  w.userData.grimeMesh?.dispose();
+  w.userData.grime?.mat.dispose();
+  w.traverse((o) => { if (o.isMesh && o.userData.ownMat) o.material.dispose(); });
+}
+function removeDish(w, id) {
+  scene.remove(w);
+  disposeDish(w);
+  if (dishes.get(id) === w) dishes.delete(id);
 }
 
 // ---------------------------------------------------------------------------
@@ -1111,6 +1168,14 @@ const loosenedFor = (t) => Math.min(LOOSEN_MAX, Math.max(t.loosened || 0, t.soak
 let loosenClock = 0;
 
 let bubbleClock = 0;
+function bobFoam(now) {
+  tubFoam.forEach((f, i) => {
+    foamPos.set(f.x, TUB.water + 0.01 + Math.sin(now * 1.3 + f.phase) * 0.012, f.z);
+    foamScale.set(f.r, f.r * 0.6, f.r);
+    tubFoamMesh.setMatrixAt(i, foamMatrix.compose(foamPos, noTurn, foamScale));
+  });
+  tubFoamMesh.instanceMatrix.needsUpdate = true;
+}
 function stepTub(dt, now) {
   loosenClock += dt;
   if (loosenClock > 1) {
@@ -1121,7 +1186,7 @@ function stepTub(dt, now) {
       if (w) applyLoosened(w, t.loosened);
     }
   }
-  for (const f of tubFoam) f.position.y = TUB.water + 0.01 + Math.sin(now * 1.3 + f.userData.phase) * 0.012;
+  bobFoam(now);
   bubbleClock += dt;
   if (bubbleClock < 0.18) return;
   bubbleClock = 0;
@@ -1191,7 +1256,7 @@ function stepTweens(dt) {
     const k = tw.ease(tw.t);
     obj.position.lerpVectors(tw.p0, tw.p1, k);
     obj.quaternion.slerpQuaternions(tw.q0, tw.q1, easeInOut(tw.t));
-    if (tw.t >= 1) { tweens.delete(obj); tw.onDone?.(); }
+    if (tw.t >= 1) { tweens.delete(obj); invalidate(); tw.onDone?.(); } // make sure the resting pose gets drawn
   }
 }
 
@@ -1202,7 +1267,7 @@ function stepActives(dt) {
   for (const a of actives) {
     a.t = Math.min(a.dur, a.t + dt);
     a.fn(a.dur ? a.t / a.dur : 1, dt, a.t);
-    if (a.t >= a.dur) { actives.delete(a); a.resolve(); }
+    if (a.t >= a.dur) { actives.delete(a); invalidate(); a.resolve(); }
   }
 }
 function viewTo(target, dur) {
@@ -1218,18 +1283,21 @@ function viewTo(target, dur) {
 // Particles: bubbles, water droplets, soap drops, sparkles
 // ---------------------------------------------------------------------------
 const particles = [];
+const particlePool = []; // spent particles (mesh + own material), reused by spawn()
 const sphereGeo = new THREE.SphereGeometry(1, 10, 8);
 function spawn(point, { n = 3, color = 0xffffff, speed = 0.6, gravity = 0, size = [0.03, 0.09], life = 1, glow = false, vel, opacity = 0.85, grow = !gravity } = {}) {
   for (let i = 0; i < n; i++) {
-    const m = new THREE.Mesh(sphereGeo, new THREE.MeshStandardMaterial({
-      color, transparent: true, opacity, roughness: 0.1,
-      emissive: glow ? color : 0x000000, emissiveIntensity: glow ? 0.8 : 0,
-    }));
+    const m = particlePool.pop() || new THREE.Mesh(sphereGeo, new THREE.MeshStandardMaterial({ transparent: true, roughness: 0.1 }));
+    m.material.color.set(color);
+    m.material.opacity = opacity;
+    m.material.emissive.set(glow ? color : 0x000000);
+    m.material.emissiveIntensity = glow ? 0.8 : 0;
     const r = size[0] + Math.random() * (size[1] - size[0]);
     m.scale.setScalar(r);
     m.position.copy(point);
-    const v = vel ? vel.clone() : new THREE.Vector3();
-    v.add(new THREE.Vector3((Math.random() - 0.5) * speed, Math.random() * speed, (Math.random() - 0.5) * speed));
+    const v = m.userData.v || new THREE.Vector3();
+    if (vel) v.copy(vel); else v.set(0, 0, 0);
+    v.x += (Math.random() - 0.5) * speed; v.y += Math.random() * speed; v.z += (Math.random() - 0.5) * speed;
     m.userData = { v, life: 1, decay: 1 / life, r, gravity, opacity, grow };
     scene.add(m);
     particles.push(m);
@@ -1244,7 +1312,11 @@ function stepParticles(dt) {
     p.position.addScaledVector(u.v, dt);
     p.material.opacity = Math.max(0, u.life) * u.opacity;
     if (u.grow) p.scale.setScalar(u.r * (1 + (1 - u.life) * 0.8));
-    if (u.life <= 0) { scene.remove(p); p.material.dispose(); particles.splice(i, 1); }
+    if (u.life <= 0) {
+      scene.remove(p);
+      particles.splice(i, 1);
+      if (particlePool.length < 200) particlePool.push(p); else p.material.dispose();
+    }
   }
 }
 
@@ -1613,6 +1685,7 @@ async function wash(w) {
   }
   scrubSound.stop();
   w.userData.blobs = [];
+  syncGrime(w);
   w.position.copy(washPos);
 
   // 4. Rinse: tool hand steps back, water runs, the lather slides off.
@@ -2294,8 +2367,7 @@ function toss(w) {
   logEvent('removed', t);
   const out = w.position.clone().add(new THREE.Vector3(0, 8, 0));
   moveTo(w, out, w.quaternion.clone().multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(2, 1, 0))), 0.5, (x) => x * x, () => {
-    scene.remove(w);
-    dishes.delete(t.id);
+    removeDish(w, t.id);
   });
   settleSink();
   render();
@@ -2399,10 +2471,11 @@ const plural = (n) => `${n} dish${n === 1 ? '' : 'es'}`;
 function stripGrime(w) {
   for (const b of w.userData.blobs) w.remove(b);
   w.userData.blobs = [];
+  syncGrime(w);
 }
 // (Re)create every dish mesh from `tasks` and snap them into place.
 function buildAllDishes() {
-  for (const w of dishes.values()) scene.remove(w);
+  for (const w of dishes.values()) { scene.remove(w); disposeDish(w); }
   dishes.clear();
   tweens.clear();
   for (const t of tasks) {
@@ -2476,8 +2549,7 @@ function clearTasks(list, text) {
     if (!w) return;
     const out = w.position.clone().add(new THREE.Vector3((Math.random() - 0.5) * 2, 8, 2));
     moveTo(w, out, w.quaternion.clone().multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(2, 1, 0))), 0.55, (x) => x * x, () => {
-      scene.remove(w);
-      dishes.delete(t.id);
+      removeDish(w, t.id);
     });
   }, i * 60));
   sfx.whoosh();
@@ -2510,7 +2582,7 @@ function putAway(silent) {
     t.archived = true;
     logEvent('put-away', t);
     const w = dishes.get(t.id);
-    if (w) moveTo(w, w.position.clone().add(new THREE.Vector3(6, 3, 0)), w.quaternion, 0.6, easeInOut, () => { scene.remove(w); dishes.delete(t.id); });
+    if (w) moveTo(w, w.position.clone().add(new THREE.Vector3(6, 3, 0)), w.quaternion, 0.6, easeInOut, () => removeDish(w, t.id));
   }
   render();
   undo?.();
@@ -2708,7 +2780,11 @@ renderer.setAnimationLoop(() => {
   const ambient = particles.length || soaking().length;
   const interval = moving ? 0 : ambient ? 33 : Infinity;
   if (!needsRender && now - lastFrame < interval) return;
+  // Ambient frames (bobbing suds, rising bubbles) move nothing that casts a shadow, so they
+  // reuse the last shadow map; anything else (tweens, drags, washes, changes) redraws it.
+  renderer.shadowMap.needsUpdate = moving || needsRender;
   needsRender = false;
+  for (const w of dishes.values()) syncGrime(w);
   lastFrame = now;
   frames++;
 
@@ -2764,6 +2840,33 @@ window.sinkful = {
   finale: async () => { if (washing) return; washing = 'finale'; document.body.classList.add('washing'); await finale(); washing = null; document.body.classList.remove('washing'); hideToast(); },
   hold: (name) => holdProp(props.find((p) => p.userData.name.toLowerCase().includes(name.toLowerCase()))),
   screenOf: (name) => { const p = props.find((q) => q.userData.name.toLowerCase().includes(name.toLowerCase())); const v = p.position.clone().project(camera); return [Math.round((v.x + 1) / 2 * innerWidth), Math.round((1 - v.y) / 2 * innerHeight)]; },
+  // Rough CPU cost of the hot paths: a full frame (with/without the shadow pass) and a hover hit-test.
+  meshBreakdown: () => {
+    const by = {};
+    scene.traverse((o) => {
+      if (!o.isMesh && !o.isPoints && !o.isInstancedMesh) return;
+      let top = o; while (top.parent && top.parent !== scene) top = top.parent;
+      const key = `${o.geometry.type}${o.isInstancedMesh ? '(inst)' : ''} <- ${top.userData?.taskId ? 'dish' : top.userData?.prop ? 'prop:' + top.userData.name : top === wallCal ? 'calendar' : top.name || top.type}`;
+      by[key] = (by[key] || 0) + 1;
+    });
+    return Object.entries(by).sort((a, b) => b[1] - a[1]).slice(0, 30);
+  },
+  perf: () => {
+    const time = (n, fn) => { const t0 = performance.now(); for (let i = 0; i < n; i++) fn(i); return +((performance.now() - t0) / n).toFixed(3); };
+    renderer.render(scene, camera);
+    const { calls, triangles } = renderer.info.render;
+    const frameMs = time(20, () => { renderer.shadowMap.needsUpdate = true; renderer.render(scene, camera); });
+    const auto = renderer.shadowMap.autoUpdate;
+    renderer.shadowMap.autoUpdate = false;
+    const noShadowMs = time(20, () => renderer.render(scene, camera));
+    renderer.shadowMap.autoUpdate = auto;
+    renderer.getContext().finish();
+    const pickMs = time(200, (i) => pickAny((i * 37) % innerWidth, (i * 53) % innerHeight));
+    let meshes = 0, pickTris = 0;
+    scene.traverse((o) => { if (o.isMesh) meshes++; });
+    for (const l of signLetters) pickTris += l.geometry.index ? l.geometry.index.count / 3 : l.geometry.attributes.position.count / 3;
+    return { calls, triangles, meshes, frameMs, noShadowMs, pickMs, signPickTris: pickTris, soaking: soaking().length, particles: particles.length };
+  },
   screenAt: (x, y, z) => { const v = new THREE.Vector3(x, y, z).project(camera); return [Math.round((v.x + 1) / 2 * innerWidth), Math.round((1 - v.y) / 2 * innerHeight)]; },
   dishAt: (title) => { const t = tasks.find((x) => x.title === title); const w = dishes.get(t.id); return window.sinkful.screenAt(w.position.x, w.position.y + 0.2, w.position.z); },
   soak: (type) => soak(liveDishes().find((w) => taskById(w.userData.taskId).type === type)),
