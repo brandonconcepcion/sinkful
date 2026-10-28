@@ -16,6 +16,7 @@ A to-do list you wash. Every task is a dish in the sink.
 - The background blurs (depth of field) while a dish is being washed.
 - **Edit a task** with the ✎ Edit button on a held dish (or `E`), or the pencil next to it in the list: change its title, notes, size or urgency. A new size or urgency rebuilds the 3D dish to match. Undoable.
 - **Bulk actions** in each panel header: sink **wash all** / **clear**, tub **wash all** / **take out**, rack **put away**, plus the trash button top-left to clear everything (sink and tub emptied, rack put away). Every bulk action shows an **Undo** toast for 7 seconds.
+- **Halloween mode** (pumpkin button, top-left): a dusky purple kitchen with bats on the wall, cobwebs, a dangling spider, flickering candles, string lights under the sign and a couple more pumpkins. It's on by default from mid-October through Halloween; each device remembers your choice. The jack-o'-lantern on the counter stays year-round (click it twice for a boo).
 - **Put away** clears the rack. Tasks are saved in `localStorage`.
 
 ## Run

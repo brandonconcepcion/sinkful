@@ -91,7 +91,8 @@ function applyView() {
 }
 applyView();
 
-scene.add(new THREE.HemisphereLight(0xffffff, 0x8a9a96, 0.6));
+const hemi = new THREE.HemisphereLight(0xffffff, 0x8a9a96, 0.6);
+scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xfff4e0, 2.2);
 sun.position.set(-4, 14, 6);
 sun.castShadow = true;
@@ -222,13 +223,12 @@ const counterTex = speckleTexture();
 const counterMat = new THREE.MeshStandardMaterial({ map: counterTex, roughness: 0.55 });
 const wallMat = new THREE.MeshStandardMaterial({ color: 0x9cc7bd, roughness: 0.9 });
 
-function speckleTexture() {
+function speckleTexture(base = '#ece6da', flecks = ['#d6cebe', '#f7f3eb', '#c9bfad', '#b5aa97']) {
   const c = document.createElement('canvas');
   c.width = c.height = 512;
   const g = c.getContext('2d');
-  g.fillStyle = '#ece6da';
+  g.fillStyle = base;
   g.fillRect(0, 0, 512, 512);
-  const flecks = ['#d6cebe', '#f7f3eb', '#c9bfad', '#b5aa97'];
   for (let i = 0; i < 4200; i++) {
     g.globalAlpha = 0.35 + Math.random() * 0.4;
     g.fillStyle = flecks[i % flecks.length];
@@ -535,6 +535,96 @@ async function buildDecor() {
   hang.position.set(tx, TUB.h - 0.33, front + 0.15);
   hang.rotation.x = 0.06;
   for (const m of [top, hang]) { m.castShadow = m.receiveShadow = true; scene.add(m); }
+
+  // Jack-o'-lantern between the cutting board and the cactus.
+  const lantern = makePumpkin({ r: 0.55, carved: true });
+  lantern.position.set(-3.62, 0, -4.05);
+  lantern.rotation.y = 0.12;
+  addProp(lantern, "Jack-o'-lantern", 'boo');
+}
+
+// ---------------------------------------------------------------------------
+// Pumpkins: a ribbed sphere with a painted skin. Carved ones get a face that glows
+// (emissive map) and a candle light inside.
+// ---------------------------------------------------------------------------
+const pumpkinGeo = (() => {
+  const geo = new THREE.SphereGeometry(1, 48, 32);
+  const p = geo.attributes.position, v = new THREE.Vector3();
+  for (let i = 0; i < p.count; i++) {
+    v.fromBufferAttribute(p, i);
+    const lobe = 1 - 0.09 * (1 - Math.abs(Math.cos(4 * Math.atan2(v.z, v.x)))) ** 3; // 8 ribs, sharp grooves
+    const dimple = 1 - 0.18 * Math.abs(v.y) ** 6; // pulled in at the stem and the base
+    p.setXYZ(i, v.x * lobe * dimple, v.y * 0.78, v.z * lobe * dimple);
+  }
+  geo.computeVertexNormals();
+  return geo;
+})();
+// Skin canvas maps straight onto the sphere: x = around (the face sits at u = 0.25, facing +z), y = top to bottom.
+function pumpkinSkin(colors, face) {
+  const c = document.createElement('canvas');
+  c.width = 512; c.height = 256;
+  const g = c.getContext('2d');
+  const grad = g.createLinearGradient(0, 0, 0, 256);
+  grad.addColorStop(0, colors[0]); grad.addColorStop(0.5, colors[1]); grad.addColorStop(1, colors[0]);
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 512, 256);
+  g.globalAlpha = 0.35;
+  g.strokeStyle = colors[2];
+  g.lineWidth = 6;
+  for (let k = 0; k < 8; k++) { // the grooves between ribs
+    const x = (1 / 16 + k / 8) * 512;
+    g.beginPath(); g.moveTo(x, 0); g.bezierCurveTo(x - 4, 90, x + 4, 170, x, 256); g.stroke();
+  }
+  g.globalAlpha = 1;
+  if (face) face(g);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  return tex;
+}
+// Triangle eyes, a nose and a gap-toothed grin, a little above the middle so it reads from above.
+// `edge` strokes each shape: the skin gets a dark rim, the glow map is pulled in from it.
+function drawFace(g, fill, edge, width) {
+  g.fillStyle = fill;
+  g.strokeStyle = edge;
+  g.lineWidth = width;
+  g.lineJoin = 'round';
+  const tri = (pts) => { g.beginPath(); pts.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y))); g.closePath(); g.fill(); g.stroke(); };
+  tri([[100, 98], [124, 98], [114, 70]]);
+  tri([[132, 98], [156, 98], [142, 70]]);
+  tri([[122, 114], [134, 114], [128, 102]]);
+  tri([[92, 120], [164, 120], [158, 136], [148, 128], [142, 140], [134, 130], [122, 130], [114, 140], [108, 128], [98, 136]]);
+}
+const stemGeo = new THREE.CylinderGeometry(0.08, 0.13, 0.4, 10);
+const stemMat = new THREE.MeshStandardMaterial({ color: 0x5f6b2a, roughness: 0.8 });
+const lanterns = []; // carved pumpkins, so the theme can turn their candles up and flicker them
+
+function makePumpkin({ r = 0.5, carved = false, colors = ['#e8741c', '#f7932d', '#a8430b'] } = {}) {
+  const group = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({ map: pumpkinSkin(colors, carved && ((g) => drawFace(g, '#2a1003', '#2a1003', 6))), roughness: 0.55 });
+  if (carved) {
+    mat.emissiveMap = pumpkinSkin(['#000', '#000', '#000'], (g) => drawFace(g, '#fff', '#000', 5));
+    mat.emissive.set(0xffd25e);
+    mat.emissiveIntensity = 0.7;
+  }
+  const body = new THREE.Mesh(pumpkinGeo, mat);
+  body.scale.setScalar(r);
+  body.position.y = r * 0.78;
+  body.rotation.x = carved ? -0.55 : 0; // tipped back a little so the face looks up at the camera
+  const stem = new THREE.Mesh(stemGeo, stemMat); // in the body's unit space, so it scales with it
+  stem.position.y = 0.7;
+  stem.rotation.z = 0.25;
+  body.add(stem);
+  group.add(body);
+  group.traverse((o) => { if (o.isMesh) o.castShadow = o.receiveShadow = true; });
+  if (carved) {
+    // Candle light inside. Always in the scene (intensity 0 when off), so turning it on doesn't recompile shaders.
+    const light = new THREE.PointLight(0xff9a3c, 0, 4, 2);
+    light.position.set(0, r * 0.7, r * 0.35);
+    group.add(light);
+    lanterns.push({ mat, light });
+  }
+  return group;
 }
 
 // Glazed 3D letters on a little shelf on the backsplash, above the faucet.
@@ -2108,6 +2198,17 @@ const SURPRISES = {
     for (let i = 0; i < 5; i++) setTimeout(() => spawn(propPoint(p, 0.5, 0, 0.5), { n: 5, color: 0x2b2420, speed: 0.5, gravity: 5, size: [0.015, 0.03], life: 0.9, opacity: 1 }), i * 120);
     return animate(0.7, (k) => { m.rotation.y = m.userData.ry0 + easeInOut(k) * Math.PI * 2; });
   },
+  boo(p, m) {
+    sfx.boo();
+    const at = propPoint(p, 0.5, 0.9, 0.5);
+    for (let i = 0; i < 4; i++) setTimeout(() => spawn(at, { n: 4, color: 0xffa632, glow: true, opacity: 1, speed: 0.7, size: [0.02, 0.05], life: 1.2 }), i * 110);
+    const lit = lanterns.find((l) => p.getObjectById(l.light.id));
+    return animate(1.1, (k) => {
+      m.position.y = m.userData.y0 + Math.abs(Math.sin(k * Math.PI * 3)) * 0.18 * (1 - k);
+      m.rotation.z = Math.sin(k * Math.PI * 6) * 0.12 * (1 - k);
+      if (lit) lit.flare = Math.sin(k * Math.PI) * 2.5; // the face blazes, then settles
+    });
+  },
   glug(p, m) {
     sfx.glug();
     return animate(0.8, (k) => { m.rotation.z = Math.sin(k * Math.PI) * 0.7; });
@@ -2700,6 +2801,7 @@ const ICONS = {
   muted: '<path d="M11 5 6 9H2v6h4l5 4z"/><path d="m22 9-6 6M16 9l6 6"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
+  pumpkin: '<path d="M12 7.5c-1.6-1-3.3-1-5 0C4.5 9 4 12 4.6 15c.6 3 2.6 5 5 5 .9 0 1.7-.3 2.4-.7.7.4 1.5.7 2.4.7 2.4 0 4.4-2 5-5 .6-3 .1-6-2.4-7.5-1.7-1-3.4-1-5 0z"/><path d="M12 7.5c-1.3 2.5-1.3 9.3 0 11.8"/><path d="M12 7.5V5.5c0-1 .6-2 1.8-2.4"/>',
   trash: '<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/>',
 };
 const icon = (name) => `<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`;
@@ -2794,6 +2896,181 @@ function hash(s) { let h = 2166136261; for (const c of s) h = Math.imul(h ^ c.ch
 function mulberry32(a) { return () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 
 // ---------------------------------------------------------------------------
+// Halloween theme: dusky colours, a brighter flickering jack-o'-lantern, and decor that only
+// shows up for it (bats, cobwebs, a dangling spider, candles, string lights, more pumpkins).
+// The pumpkin button (top left) toggles it and each device remembers the choice; with no choice
+// saved, it's on from mid-October through Halloween.
+// ---------------------------------------------------------------------------
+const THEME_KEY = 'sinkful.theme';
+const THEMES = {
+  classic: {
+    background: 0xd9e4e2, wall: 0x9cc7bd, hemi: [0xffffff, 0x8a9a96, 0.6], sun: [0xfff4e0, 2.2],
+    sign: SIGN_COLORS, lantern: 0, glow: 0.7, ui: '#2f8f7a',
+  },
+  halloween: {
+    background: 0x241c30, wall: 0x3b2e5a, hemi: [0xcbb9ff, 0x3a2c48, 0.6], sun: [0xffe2c4, 1.9],
+    sign: [0xf07a1a, 0x7b3fb5, 0x5fae36, 0xf07a1a, 0x2b2433, 0x7b3fb5, 0xf07a1a], lantern: 1.6, glow: 1.5, ui: '#d9621a',
+  },
+};
+let theme = localStorage.getItem(THEME_KEY) || (() => {
+  const d = new Date();
+  return d.getMonth() === 9 && d.getDate() >= 15 ? 'halloween' : 'classic';
+})();
+let spookyCounterTex = null;
+
+const halloweenDecor = (function buildHalloweenDecor() {
+  const g = new THREE.Group();
+  g.visible = false;
+  const black = new THREE.MeshStandardMaterial({ color: 0x1e1626, roughness: 0.6 });
+
+  // Bats on the backsplash, flat silhouettes.
+  const half = [[0.06, 0.2], [0.09, 0.08], [0.2, 0.12], [0.5, 0.24], [0.44, 0.02], [0.36, 0.07], [0.3, -0.05], [0.22, 0], [0.14, -0.1], [0.07, -0.04]];
+  const shape = new THREE.Shape();
+  shape.moveTo(0, 0.1);
+  for (const [x, y] of half) shape.lineTo(x, y);
+  shape.lineTo(0, -0.13);
+  for (const [x, y] of [...half].reverse()) shape.lineTo(-x, y);
+  const batGeo = new THREE.ExtrudeGeometry(shape, { depth: 0.03, bevelEnabled: false });
+  const bats = [[-8.1, 4.3, 2.2, 0.2], [-6.6, 5.0, 1.6, -0.25], [-5.0, 4.1, 1.9, 0.1], [7.7, 3.9, 1.7, -0.2], [8.9, 4.9, 2.3, 0.15]].map(([x, y, s, rz]) => {
+    const bat = new THREE.Mesh(batGeo, black);
+    bat.position.set(x, y, -4.97);
+    bat.scale.setScalar(s);
+    bat.rotation.z = rz;
+    bat.userData = { y, rz };
+    g.add(bat);
+    return bat;
+  });
+
+  // Cobwebs in the corners where the wall meets the counter.
+  const web = [];
+  const webAt = (cx, a0) => {
+    const spokes = 7, R = 2;
+    const pt = (a, r) => new THREE.Vector3(cx + Math.cos(a) * r, 0.02 + Math.sin(a) * r, -4.96);
+    for (let i = 0; i < spokes; i++) web.push(pt(a0, 0), pt(a0 + (i / (spokes - 1)) * Math.PI / 2, R));
+    for (let r = 0.35; r < R; r += 0.35) {
+      for (let i = 0; i < spokes - 1; i++) {
+        const a = a0 + (i / (spokes - 1)) * Math.PI / 2, b = a0 + ((i + 1) / (spokes - 1)) * Math.PI / 2;
+        const mid = pt((a + b) / 2, r * 0.9); // threads sag toward the centre
+        web.push(pt(a, r), mid, mid, pt(b, r));
+      }
+    }
+  };
+  webAt(-9.7, 0);
+  webAt(9.9, Math.PI / 2);
+  g.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(web), new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5 })));
+
+  // A spider dangling from the end of the sign shelf.
+  const spider = new THREE.Group();
+  const body = new THREE.Mesh(sphereGeoShared, black);
+  body.scale.set(0.1, 0.09, 0.12);
+  const head = new THREE.Mesh(sphereGeoShared, black);
+  head.scale.setScalar(0.06);
+  head.position.set(0, -0.02, 0.13);
+  spider.add(body, head);
+  const legGeo = new THREE.CylinderGeometry(0.008, 0.008, 0.26, 4);
+  for (const side of [-1, 1]) for (let i = 0; i < 4; i++) {
+    const leg = new THREE.Mesh(legGeo, black);
+    leg.position.set(side * 0.13, -0.02, -0.08 + i * 0.07);
+    leg.rotation.set((i - 1.5) * 0.35, 0, side * 1.1);
+    spider.add(leg);
+  }
+  const SPIDER_TOP = 2.86;
+  spider.position.set(-2.9, 1.95, -4.45);
+  spider.userData.y = 1.95;
+  const thread = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 1, 0)]), new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.6 }));
+  thread.position.set(-2.9, 0, -4.45);
+  g.add(spider, thread);
+
+  // Candles to the right of the utensil crock.
+  const wax = new THREE.MeshStandardMaterial({ color: 0xf1e6cc, roughness: 0.7 });
+  const flameMat = new THREE.MeshBasicMaterial({ color: 0xffc14d });
+  const flames = [[0, 0, 0.8, 0.14], [0.34, 0.18, 0.55, 0.12], [-0.3, 0.26, 0.4, 0.11]].map(([dx, dz, h, r]) => {
+    const candle = new THREE.Mesh(new THREE.CylinderGeometry(r, r * 1.05, h, 16), wax);
+    candle.position.set(8.4 + dx, h / 2, -4.2 + dz);
+    candle.castShadow = candle.receiveShadow = true;
+    const flame = new THREE.Mesh(sphereGeoShared, flameMat);
+    flame.scale.set(0.05, 0.11, 0.05);
+    flame.position.set(8.4 + dx, h + 0.13, -4.2 + dz);
+    g.add(candle, flame);
+    return flame;
+  });
+
+  // String lights drooping under the sign shelf.
+  const curve = new THREE.CatmullRomCurve3([new THREE.Vector3(-3.1, 2.84, -4.42), new THREE.Vector3(0, 2.5, -4.36), new THREE.Vector3(3.1, 2.84, -4.42)]);
+  g.add(new THREE.Mesh(new THREE.TubeGeometry(curve, 40, 0.012, 4), black));
+  const BULBS = [0xff8a1f, 0x9b5de5, 0x7bd34a];
+  const bulbs = new THREE.InstancedMesh(sphereGeoShared, new THREE.MeshBasicMaterial(), 15);
+  const m4 = new THREE.Matrix4();
+  for (let i = 0; i < 15; i++) {
+    const p = curve.getPoint((i + 0.5) / 15);
+    bulbs.setMatrixAt(i, m4.compose(p.setY(p.y - 0.06), new THREE.Quaternion(), new THREE.Vector3(0.05, 0.07, 0.05)));
+    bulbs.setColorAt(i, new THREE.Color(BULBS[i % 3]));
+  }
+  g.add(bulbs);
+
+  // More pumpkins: a little orange one by the plant, a white one by the candles.
+  const orange = makePumpkin({ r: 0.3 });
+  orange.position.set(-8.45, 0, -3.5);
+  orange.rotation.y = 0.6;
+  const ghost = makePumpkin({ r: 0.32, colors: ['#e3dac6', '#f6f1e4', '#a89c82'] });
+  ghost.position.set(8.8, 0, -3.5);
+  g.add(orange, ghost);
+
+  g.userData = { bats, spider, thread, flames, SPIDER_TOP };
+  scene.add(g);
+  return g;
+})();
+
+// Flicker: 0..1-ish noise that never repeats in an obvious way.
+const flicker = (t, seed = 0) => 0.5 * Math.sin(t * 13 + seed) + 0.3 * Math.sin(t * 7.3 + seed * 2.1) + 0.2 * Math.sin(t * 23 + seed * 3.7);
+function stepHalloween(t) {
+  const th = THEMES[theme];
+  const spooky = theme === 'halloween';
+  for (const [i, l] of lanterns.entries()) {
+    const f = spooky ? 1 + 0.14 * flicker(t, i) : 1;
+    l.light.intensity = (th.lantern + (l.flare || 0)) * f;
+    l.mat.emissiveIntensity = (th.glow + (l.flare || 0) * 0.6) * f;
+  }
+  if (!spooky) return;
+  const { bats, spider, thread, flames, SPIDER_TOP } = halloweenDecor.userData;
+  bats.forEach((b, i) => { b.position.y = b.userData.y + Math.sin(t * 1.1 + i * 1.7) * 0.06; b.rotation.z = b.userData.rz + Math.sin(t * 0.8 + i) * 0.05; });
+  flames.forEach((f, i) => { f.scale.y = 0.11 * (1 + 0.25 * flicker(t * 1.3, i + 5)); });
+  spider.position.y = spider.userData.y + Math.sin(t * 0.9) * 0.18;
+  spider.rotation.y = Math.sin(t * 0.5) * 0.6;
+  thread.position.y = spider.position.y + 0.08;
+  thread.scale.y = SPIDER_TOP - thread.position.y;
+}
+
+function applyTheme(name) {
+  theme = name;
+  const t = THEMES[name];
+  const spooky = name === 'halloween';
+  scene.background.set(t.background);
+  wallMat.color.set(t.wall);
+  counterMat.map = spooky
+    ? (spookyCounterTex ||= speckleTexture('#3d3645', ['#4b4354', '#2e2935', '#5a4b70', '#4b4354', '#2e2935', '#5a4b70', '#c8641c']))
+    : counterTex;
+  hemi.color.set(t.hemi[0]); hemi.groundColor.set(t.hemi[1]); hemi.intensity = t.hemi[2];
+  sun.color.set(t.sun[0]); sun.intensity = t.sun[1];
+  signLetters.forEach((l, i) => l.material.color.set(t.sign[i % t.sign.length]));
+  halloweenDecor.visible = spooky;
+  stepHalloween(performance.now() / 1000);
+  document.body.classList.toggle('halloween', spooky);
+  document.querySelector('meta[name=theme-color]')?.setAttribute('content', t.ui);
+  const btn = $('theme');
+  btn.classList.toggle('on', spooky);
+  btn.title = spooky ? 'Halloween mode is on (click for the regular kitchen)' : 'Halloween mode';
+  invalidate();
+}
+$('theme').onclick = () => {
+  const next = theme === 'halloween' ? 'classic' : 'halloween';
+  localStorage.setItem(THEME_KEY, next);
+  if (next === 'halloween') sfx.boo();
+  applyTheme(next);
+};
+applyTheme(theme);
+
+// ---------------------------------------------------------------------------
 // Boot
 // ---------------------------------------------------------------------------
 const clock = new THREE.Clock();
@@ -2805,6 +3082,7 @@ renderer.setAnimationLoop(() => {
   stepActives(dt);
   stepParticles(dt);
   stepTub(dt, performance.now() / 1000);
+  stepHalloween(performance.now() / 1000);
   applyView();
   placeDishActions();
   placePropLabel();
@@ -2815,7 +3093,7 @@ renderer.setAnimationLoop(() => {
   const now = performance.now();
   const moving = tweens.size || actives.size || inspecting || heldProp || press || washing || dof.amount > 0.01;
   const ambient = particles.length || soaking().length;
-  const interval = moving ? 0 : ambient ? 33 : Infinity;
+  const interval = moving ? 0 : ambient ? 33 : theme === 'halloween' ? 66 : Infinity; // candles flicker at 15 fps
   if (!needsRender && now - lastFrame < interval) return;
   // Ambient frames (bobbing suds, rising bubbles) move nothing that casts a shadow, so they
   // reuse the last shadow map; anything else (tweens, drags, washes, changes) redraws it.
@@ -2844,6 +3122,7 @@ if (sign) { // make room for the sign in the home view, then drop the letters in
   resize();
   for (const l of signLetters) l.visible = false;
   waveSign({ drop: true });
+  applyTheme(theme); // the letters exist now
 }
 buildAllDishes();
 render();

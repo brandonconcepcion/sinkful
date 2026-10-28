@@ -247,3 +247,11 @@ export function squish() {
   if (!ready()) return;
   burst({ type: 'lowpass', freq: 2200, to: 400, Q: 2, peak: 0.16, attack: 0.03, decay: 0.22 });
 }
+
+// A ghostly "ooOOoo" for the jack-o'-lantern.
+export function boo() {
+  if (!ready()) return;
+  tone(260, { type: 'triangle', to: 390, peak: 0.12, attack: 0.18, decay: 0.45 });
+  tone(390, { type: 'triangle', to: 220, at: 0.4, peak: 0.12, attack: 0.1, decay: 0.7 });
+  tone(523, { to: 784, peak: 0.04, attack: 0.2, decay: 0.4 });
+}
