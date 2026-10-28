@@ -558,6 +558,94 @@ async function buildSign() {
   scene.add(group);
   return group;
 }
+// Wall calendar beside the sign: shows today's date, and clicking it syncs calendar dishes.
+const WALL_CAL = { x: 5.9, y: 4.25, z: -4.95, w: 1.5, h: 1.72, lean: 0.45 };
+let wallCal = null;
+function calendarFace() {
+  const c = document.createElement('canvas');
+  c.width = 260; c.height = 300;
+  const g = c.getContext('2d');
+  const now = new Date();
+  g.fillStyle = '#fbf7ef'; g.fillRect(0, 0, 260, 300);
+  g.fillStyle = '#e8775c'; g.fillRect(0, 0, 260, 78);
+  g.fillStyle = '#fff'; g.textAlign = 'center';
+  g.font = '700 38px ui-rounded, "SF Pro Rounded", system-ui, sans-serif';
+  g.fillText(now.toLocaleString('en-US', { month: 'long' }).toUpperCase(), 130, 54);
+  g.fillStyle = '#1f2a2e';
+  g.font = '800 132px ui-rounded, "SF Pro Rounded", system-ui, sans-serif';
+  g.fillText(String(now.getDate()), 130, 205);
+  g.fillStyle = '#5d6b70';
+  g.font = '600 28px ui-rounded, "SF Pro Rounded", system-ui, sans-serif';
+  g.fillText(now.toLocaleString('en-US', { weekday: 'long' }), 130, 252);
+  g.fillStyle = '#2f8f7a';
+  g.font = '600 20px ui-rounded, "SF Pro Rounded", system-ui, sans-serif';
+  g.fillText('tap to sync', 130, 284);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  return tex;
+}
+function buildWallCalendar() {
+  const group = new THREE.Group(); // pivots at the nail, so the pad hangs below it
+  const pad = new THREE.Group();
+  const face = calendarFace();
+  const pageMat = () => new THREE.MeshStandardMaterial({ map: face, roughness: 0.9, envMapIntensity: 0.35 });
+  const back = new THREE.Mesh(new THREE.BoxGeometry(WALL_CAL.w + 0.08, WALL_CAL.h + 0.08, 0.05), new THREE.MeshStandardMaterial({ color: 0xc89c6d, roughness: 0.7 }));
+  back.position.set(0, -WALL_CAL.h / 2 - 0.12, -0.03);
+  const page = new THREE.Mesh(new THREE.PlaneGeometry(WALL_CAL.w, WALL_CAL.h), pageMat());
+  page.position.set(0, -WALL_CAL.h / 2 - 0.12, 0.002);
+  // The top sheet flips over the rings when you sync; it pivots at the top edge.
+  const flipper = new THREE.Group();
+  flipper.position.set(0, -0.12, 0.006);
+  const sheet = new THREE.Mesh(new THREE.PlaneGeometry(WALL_CAL.w, WALL_CAL.h), pageMat());
+  sheet.material.transparent = true;
+  sheet.material.side = THREE.DoubleSide;
+  sheet.position.y = -WALL_CAL.h / 2;
+  flipper.add(sheet);
+  pad.add(back, page, flipper);
+  const metal = new THREE.MeshStandardMaterial({ color: 0x8a949a, metalness: 0.8, roughness: 0.3 });
+  for (const rx of [-0.38, 0.38]) {
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.07, 0.018, 8, 20), metal);
+    ring.rotation.y = Math.PI / 2;
+    ring.position.set(rx, -0.12, 0.02);
+    pad.add(ring);
+  }
+  const nail = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.12, 10), metal);
+  nail.rotation.x = Math.PI / 2;
+  nail.position.z = -0.02;
+  group.add(nail, pad);
+  pad.rotation.x = -WALL_CAL.lean; // bottom swings out from the wall, face tilts toward the camera
+  group.position.set(WALL_CAL.x, WALL_CAL.y, WALL_CAL.z);
+  group.traverse((o) => { if (o.isMesh) o.castShadow = o.receiveShadow = true; });
+  group.userData = { model: group, page, sheet, flipper, face };
+  scene.add(group);
+  wallCal = group;
+  return group;
+}
+// New day since the face was drawn: redraw it.
+function refreshCalendarFace() {
+  if (!wallCal) return;
+  const tex = calendarFace();
+  for (const m of [wallCal.userData.page, wallCal.userData.sheet]) { m.material.map = tex; m.material.needsUpdate = true; }
+  wallCal.userData.face.dispose();
+  wallCal.userData.face = tex;
+  invalidate();
+}
+async function flipCalendarPage() {
+  const { flipper, sheet } = wallCal.userData;
+  if (flipper.userData.flipping) return;
+  flipper.userData.flipping = true;
+  sfx.rustle();
+  await animate(0.6, (k) => {
+    flipper.rotation.x = -easeInOut(k) * Math.PI * 0.95; // up and over the rings
+    sheet.material.opacity = 1 - Math.max(0, k - 0.6) / 0.4;
+  });
+  flipper.rotation.x = 0;
+  sheet.material.opacity = 0;
+  await animate(0.3, (k) => { sheet.material.opacity = k; }); // the next page settles in
+  flipper.userData.flipping = false;
+}
+
 // Letters hop one after another, like a wave (on load and when the sink is emptied).
 function waveSign({ drop = false } = {}) {
   signLetters.forEach((l, i) => hopLetter(l, i * 70, false, drop));
@@ -662,7 +750,7 @@ const serialize = () => JSON.stringify({ tasks, deleted });
 // written to it (debounced) and merged with whatever is already there. On the hosted copy
 // (GitHub Pages) the same state lives in a secret Gist instead, unlocked by vault.js.
 // localStorage is a cache and the fallback under any other static server.
-const storage = { mode: 'browser', backend: null, lastSaved: '', timer: null, failed: false, rev: 0 };
+const storage = { mode: 'browser', backend: null, lastSaved: '', timer: null, failed: false, rev: 0, calendar: null };
 const channel = 'BroadcastChannel' in window ? new BroadcastChannel('sinkful') : null;
 
 // A backend reads {tasks, deleted, rev} and writes {tasks, deleted, baseRev}, answering
@@ -690,7 +778,9 @@ function gistBackend({ token, gistId }) {
   const get = async () => {
     const res = await fetch(url, { headers, cache: 'no-store' });
     if (!res.ok) throw Object.assign(new Error(`HTTP ${res.status}`), { status: res.status });
-    const file = (await res.json()).files?.['sinkful.json'];
+    const files = (await res.json()).files || {};
+    try { storage.calendar = files['calendar.json'] ? JSON.parse(files['calendar.json'].content) : null; } catch { storage.calendar = null; }
+    const file = files['sinkful.json'];
     if (!file) return { tasks: null, rev: 0 };
     return JSON.parse(file.truncated ? await (await fetch(file.raw_url)).text() : file.content);
   };
@@ -710,6 +800,13 @@ function gistBackend({ token, gistId }) {
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return { rev };
+    },
+    // calendar.json: the sync web app's URL (saved from here) and the last sync (written by the script).
+    async putCalendar(info) {
+      const res = await fetch(url, {
+        method: 'PATCH', headers, body: JSON.stringify({ files: { 'calendar.json': { content: JSON.stringify(info, null, 2) } } }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
     },
   };
 }
@@ -801,7 +898,7 @@ async function pullFromRemote() {
   } catch { /* offline: try again next time */ }
 }
 channel?.addEventListener('message', pullFromRemote);
-document.addEventListener('visibilitychange', () => { if (!document.hidden) pullFromRemote(); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { pullFromRemote(); refreshCalendarFace(); } });
 // The calendar script adds dishes to the Gist through the day: check for them while the page is open.
 setInterval(() => { if (!document.hidden && storage.mode === 'gist') pullFromRemote(); }, 5 * 60 * 1000);
 addEventListener('pagehide', () => {
@@ -2047,7 +2144,7 @@ function dropDish(w, e) {
     const mx = Math.max(0, SINK.w / 2 - r * 0.8 - 0.1), mz = Math.max(0, SINK.d / 2 - r * 0.8 - 0.1);
     Object.assign(t, { x: THREE.MathUtils.clamp(at.x, -mx, mx), z: THREE.MathUtils.clamp(at.z, -mz, mz), pv: PILE_VERSION });
     setTimeout(() => sfx.clink(METAL.has(t.type)), 350);
-  } else if (target === 'full') showToast("The tub's full. Wash or take one out first.");
+  } else if (target === 'full') notify("The tub's full. Wash or take one out first.");
   layoutTub();
   settleSink();
   render();
@@ -2072,13 +2169,13 @@ canvas.addEventListener('pointermove', (e) => {
     press.x = e.clientX; press.y = e.clientY;
     return;
   }
-  const { dish: w, prop, letter } = pickAny(e.clientX, e.clientY);
-  setHover(w || prop);
+  const { dish: w, prop, letter, calendar } = pickAny(e.clientX, e.clientY);
+  setHover(w || prop || calendar);
   if (letter) canvas.style.cursor = 'pointer';
   else if ((inspecting || heldProp) && !w && !prop) canvas.style.cursor = 'grab';
-  if (w || prop) {
+  if (w || prop || calendar) {
     const t = w && taskById(w.userData.taskId);
-    tooltip.textContent = prop ? prop.userData.name : t.soak ? `${t.title} · soaking ${elapsed(t.soak.since)}` : `${t.title} · ${DISHES[t.type].size}`;
+    tooltip.textContent = calendar ? calendarTip() : prop ? prop.userData.name : t.soak ? `${t.title} · soaking ${elapsed(t.soak.since)}` : `${t.title} · ${DISHES[t.type].size}`;
     tooltip.style.left = e.clientX + 'px';
     tooltip.style.top = e.clientY + 'px';
     tooltip.classList.remove('hidden');
@@ -2102,20 +2199,23 @@ canvas.addEventListener('pointerup', (e) => {
   if (p?.dragging && !washing) { dropDish(p.dish, e); return; }
   if (!p || p.moved || washing) return;
   // A click: pick up a dish or prop (swapping if something is already held), otherwise set down.
-  const { dish: w, prop, letter } = pickAny(e.clientX, e.clientY, true);
-  if (w && w !== inspecting) inspect(w);
+  const { dish: w, prop, letter, calendar } = pickAny(e.clientX, e.clientY, true);
+  if (calendar) { putBack(); dropProp(); syncCalendar(); }
+  else if (w && w !== inspecting) inspect(w);
   else if (prop) { if (prop === heldProp) surprise(prop); else holdProp(prop); }
   else if (letter) hopLetter(letter, 0, true);
   else if (inspecting) putBack();
   else if (heldProp) dropProp();
 });
-// Closest thing under the pointer: a dish, a counter prop, or a sign letter.
+const calendarFromHit = (obj) => { while (obj && obj !== wallCal) obj = obj.parent; return obj; };
+// Closest thing under the pointer: a dish, a counter prop, a sign letter, or the wall calendar.
 function pickAny(x, y, includeHeld = false) {
   const dishList = liveDishes();
   if (includeHeld && inspecting) dishList.push(inspecting);
   const propList = props.filter((p) => includeHeld || p !== heldProp);
-  const hit = pick(x, y, [...dishList, ...propList, ...signLetters]);
+  const hit = pick(x, y, [...dishList, ...propList, ...signLetters, ...(wallCal ? [wallCal] : [])]);
   if (!hit) return {};
+  if (calendarFromHit(hit.object)) return { calendar: wallCal };
   if (signLetters.includes(hit.object) || signLetters.includes(hit.object.parent)) return { letter: signLetters.includes(hit.object) ? hit.object : hit.object.parent };
   return { dish: dishFromHit(hit.object), prop: propFromHit(hit.object) };
 }
@@ -2231,6 +2331,63 @@ function showToast(text, action) {
   toast.classList.remove('hidden');
 }
 function hideToast() { clearTimeout(toastTimer); toast.classList.add('hidden'); }
+// A toast with no button: goes away on its own.
+function notify(text, ms = 3500) {
+  showToast(text);
+  toastTimer = setTimeout(hideToast, ms);
+}
+
+// Calendar sync. tools/calendar-dishes.gs, deployed as a web app only you can open, adds today's
+// accepted events to the Gist. Clicking the wall calendar opens it in a small popup, waits for
+// the script to record the sync in calendar.json, then pulls in the new dishes and closes it.
+const clockTime = (iso) => new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+function calendarTip() {
+  if (storage.mode !== 'gist') return 'Calendar sync works on the hosted site';
+  const last = storage.calendar?.lastSync;
+  return last ? `Sync my calendar · last synced ${clockTime(last)}` : 'Sync my calendar';
+}
+let calendarSyncing = false;
+async function syncCalendar() {
+  flipCalendarPage();
+  refreshCalendarFace();
+  if (storage.mode !== 'gist') { notify('Calendar sync works on the hosted site (brandonconcepcion.com/sinkful)'); return; }
+  if (calendarSyncing) return;
+  let info = storage.calendar || {};
+  if (!info.syncUrl) {
+    const url = prompt('One-time setup: paste the web app URL of your Sinkful calendar script\n(Apps Script > Deploy > Manage deployments > Web app URL)');
+    if (!url) return;
+    if (!/^https:\/\/script\.google\.com\/.+\/exec/.test(url.trim())) { notify("That doesn't look like an Apps Script web app URL (it ends in /exec)", 5000); return; }
+    info = { ...info, syncUrl: url.trim() };
+    storage.calendar = info;
+    // Saved for every device; the script keeps it when it records syncs.
+    storage.backend.putCalendar(info).catch(() => notify("Couldn't save the URL to your Gist; you may be asked again"));
+  }
+  calendarSyncing = true;
+  const before = info.lastSync;
+  const popup = open(info.syncUrl, 'sinkful-calendar', 'width=480,height=420'); // right away, while the click still counts
+  showToast('Syncing your calendar…');
+  try {
+    for (let i = 0; i < 36; i++) { // up to 90 seconds (the first time, Google may ask you to sign in)
+      await new Promise((r) => setTimeout(r, 2500));
+      const data = await storage.backend.get().catch(() => null);
+      const cal = storage.calendar;
+      if (!data || !cal?.lastSync || cal.lastSync === before) continue;
+      if ((data.rev || 0) !== storage.rev) {
+        applyRemote(data);
+        if (serialize() !== storage.lastSaved) flushSave();
+        else storage.lastSaved = serialize();
+      }
+      if (!cal.syncUrl) storage.backend.putCalendar({ ...cal, syncUrl: info.syncUrl }).catch(() => {}); // lost in a race with the script
+      popup?.close();
+      notify(cal.added ? `Added ${plural(cal.added)} from your calendar` : 'Calendar synced: nothing new today');
+      if (cal.added) sfx.ding();
+      return;
+    }
+    notify('Still waiting on Google. Finish in the popup, and the dishes will show up within a few minutes.', 6000);
+  } finally {
+    calendarSyncing = false;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Bulk actions per area, all undoable
@@ -2566,6 +2723,7 @@ renderer.setAnimationLoop(() => {
   }
 });
 
+FIT_BOX.union(new THREE.Box3().setFromObject(buildWallCalendar()));
 const [, , , sign] = await Promise.all([loadModels(), buildDecor(), loadFromRemote(), buildSign().catch(() => null)]);
 if (sign) { // make room for the sign in the home view, then drop the letters in
   sign.updateMatrixWorld(true);

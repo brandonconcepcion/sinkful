@@ -56,6 +56,8 @@ The localhost copy (`server.py`, `data/`) is separate from the hosted one.
 
 `tools/calendar-dishes.gs` is a Google Apps Script that adds today's calendar events to the Gist as dishes, every hour from 7am to 5pm. Only timed events you accepted or created count. The dish size follows the meeting length, from a glass for 10 minutes to a pot for 3+ hours. Each event gets one dish per day, keyed on the event id + date, so reruns, washing or deleting it never bring it back. Unwashed calendar dishes pile up like any other. Setup steps are at the top of the file.
 
+The **wall calendar** next to the sign shows today's date. Clicking it syncs right away: it opens the script's web app in a small popup, waits for the sync to be recorded in the Gist's `calendar.json`, pulls in the new dishes, and closes the popup. The first click asks for the web app URL and saves it to the Gist for every device. On localhost the calendar is decoration only.
+
 ## Credits
 
 3D models: [Kenney Food Kit](https://kenney.nl/assets/food-kit) and [Furniture Kit](https://kenney.nl/assets/furniture-kit) (both CC0), see `models/KENNEY-LICENSE.txt` and `models/decor/KENNEY-FURNITURE-LICENSE.txt`.
