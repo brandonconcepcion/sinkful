@@ -1346,7 +1346,20 @@ const gloveMat = new THREE.MeshPhysicalMaterial({ color: 0xf29b00, roughness: 0.
 const cuffMat = gloveMat.clone();
 cuffMat.side = THREE.DoubleSide;
 
-function makeGlove(isLeft) {
+// The scrubbing hand is an Infinity Gauntlet: polished gold, a stone on every knuckle,
+// the thumb and the back of the hand. Same shape and joints as the rubber glove, so every pose still works.
+const gauntletMat = new THREE.MeshPhysicalMaterial({ color: 0xe2a72e, metalness: 1, roughness: 0.26, clearcoat: 0.5, clearcoatRoughness: 0.15 });
+const gauntletTrimMat = new THREE.MeshPhysicalMaterial({ color: 0xb07a17, metalness: 1, roughness: 0.38 });
+const gauntletCuffMat = gauntletMat.clone();
+gauntletCuffMat.side = THREE.DoubleSide;
+const smoothSphereGeo = new THREE.SphereGeometry(1, 24, 16);
+const stoneMat = (color) => new THREE.MeshPhysicalMaterial({
+  color, emissive: color, emissiveIntensity: 0.55, roughness: 0.08, clearcoat: 1, clearcoatRoughness: 0.05,
+});
+// Index to pinky, then thumb, then the big one on the back of the hand.
+const STONES = { power: 0x8a2be2, space: 0x2a6cff, reality: 0xe0192b, soul: 0xff7a00, time: 0x18c94a, mind: 0xffd21a };
+
+function makeGlove(isLeft, gauntlet = false) {
   const root = new THREE.Group();
   const inner = new THREE.Group();
   if (isLeft) inner.scale.x = -1;
@@ -1360,32 +1373,56 @@ function makeGlove(isLeft) {
     parent.add(m);
     return m;
   };
-  add(sphereGeo, gloveMat, inner, [0, 0, 0], [0.3, 0.13, 0.32]);           // palm
-  add(sphereGeo, gloveMat, inner, [0, 0.01, -0.24], [0.23, 0.12, 0.2]);    // wrist
-  add(new THREE.CylinderGeometry(0.21, 0.29, 0.5, 24, 1, true), cuffMat, inner, [0, 0.02, -0.5], null, [Math.PI / 2, 0, 0]);
-  add(new THREE.TorusGeometry(0.29, 0.04, 10, 28), gloveMat, inner, [0, 0.02, -0.75]); // rolled cuff rim
+  const skin = gauntlet ? gauntletMat : gloveMat;
+  const ball = gauntlet ? smoothSphereGeo : sphereGeo;
+  // A stone lying on the back (+y) of a part, in a gold setting.
+  const bezel = new THREE.TorusGeometry(1, 0.22, 8, 24);
+  const stone = (parent, color, pos, r) => {
+    add(ball, stoneMat(color), parent, pos, [r, r * 0.55, r * 1.15]);
+    add(bezel, gauntletTrimMat, parent, pos, [r * 1.05, r * 1.2, r * 0.7], [Math.PI / 2, 0, 0]);
+  };
+  add(ball, skin, inner, [0, 0, 0], [0.3, 0.13, 0.32]);           // palm
+  add(ball, skin, inner, [0, 0.01, -0.24], [0.23, 0.12, 0.2]);    // wrist
+  add(new THREE.CylinderGeometry(0.21, 0.29, 0.5, 24, 1, true), gauntlet ? gauntletCuffMat : cuffMat, inner, [0, 0.02, -0.5], null, [Math.PI / 2, 0, 0]);
+  add(new THREE.TorusGeometry(0.29, 0.04, 10, 28), gauntlet ? gauntletTrimMat : gloveMat, inner, [0, 0.02, -0.75]); // rolled cuff rim
+  if (gauntlet) {
+    add(new THREE.TorusGeometry(0.22, 0.035, 10, 28), gauntletTrimMat, inner, [0, 0.02, -0.27]); // wrist band
+    add(ball, gauntletTrimMat, inner, [0, 0.07, 0.03], [0.24, 0.07, 0.25]);                    // raised plate on the back
+    stone(inner, STONES.mind, [0, 0.135, 0.02], 0.075);
+  }
 
-  const seg = new THREE.CapsuleGeometry(0.066, 0.13, 6, 12);
+  const seg = new THREE.CapsuleGeometry(0.066, 0.13, 6, gauntlet ? 16 : 12);
+  const ring = new THREE.TorusGeometry(0.07, 0.014, 6, 16); // gold band at each finger joint
+  const fingerStones = [STONES.power, STONES.space, STONES.reality, STONES.soul];
   const fingers = [];
-  for (const [x, L] of [[-0.2, 0.85], [-0.07, 1], [0.07, 0.97], [0.2, 0.86]]) {
+  for (const [i, [x, L]] of [[-0.2, 0.85], [-0.07, 1], [0.07, 0.97], [0.2, 0.86]].entries()) {
     const base = new THREE.Group();
     base.position.set(x, 0, 0.27);
     inner.add(base);
-    add(seg, gloveMat, base, [0, 0, 0.1 * L], [1, L, 1], [Math.PI / 2, 0, 0]);
+    add(seg, skin, base, [0, 0, 0.1 * L], [1, L, 1], [Math.PI / 2, 0, 0]);
     const knuckle = new THREE.Group();
     knuckle.position.z = 0.2 * L;
     base.add(knuckle);
-    add(seg, gloveMat, knuckle, [0, 0, 0.085 * L], [0.95, 0.85 * L, 0.95], [Math.PI / 2, 0, 0]);
+    add(seg, skin, knuckle, [0, 0, 0.085 * L], [0.95, 0.85 * L, 0.95], [Math.PI / 2, 0, 0]);
+    if (gauntlet) {
+      // Pinky to index for the left hand, since it's mirrored.
+      stone(base, fingerStones[isLeft ? 3 - i : i], [0, 0.058, 0.02], 0.042);
+      add(ring, gauntletTrimMat, knuckle, [0, 0, 0]);
+    }
     fingers.push({ base, knuckle });
   }
   const thumb = new THREE.Group();
   thumb.position.set(0.25, -0.02, 0.02);
   inner.add(thumb);
-  add(seg, gloveMat, thumb, [0, 0, 0.12], [1.1, 1.1, 1.1], [Math.PI / 2, 0, 0]);
+  add(seg, skin, thumb, [0, 0, 0.12], [1.1, 1.1, 1.1], [Math.PI / 2, 0, 0]);
   const thumbTip = new THREE.Group();
   thumbTip.position.z = 0.22;
   thumb.add(thumbTip);
-  add(seg, gloveMat, thumbTip, [0, 0, 0.07], [1.05, 0.8, 1.05], [Math.PI / 2, 0, 0]);
+  add(seg, skin, thumbTip, [0, 0, 0.07], [1.05, 0.8, 1.05], [Math.PI / 2, 0, 0]);
+  if (gauntlet) {
+    stone(thumb, STONES.time, [0, 0.065, 0.13], 0.04);
+    add(ring, gauntletTrimMat, thumbTip, [0, 0, 0], [1.1, 1.1, 1.1]);
+  }
 
   root.userData = { fingers, thumb, thumbTip, pose: { curl: 0, thumb: 0.5, spread: 0 } };
   root.visible = false;
@@ -1415,7 +1452,7 @@ function handQuat(fingerDir, palmDir) {
 }
 
 const leftHand = makeGlove(true);
-const rightHand = makeGlove(false);
+const rightHand = makeGlove(false, true); // the one that scrubs, gives the thumbs-up and pulls the plug
 
 const sponge = new THREE.Group();
 {
