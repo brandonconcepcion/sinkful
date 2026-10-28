@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="15" fill="#2f8f7a"/>
+  <!-- plate, seen from above -->
+  <circle cx="29" cy="35" r="22" fill="#fbf7ef"/>
+  <circle cx="29" cy="35" r="14.5" fill="none" stroke="#dcd3c3" stroke-width="2.2"/>
+  <!-- grime -->
+  <ellipse cx="23" cy="38" rx="4.2" ry="3.3" fill="#8a5a2b"/>
+  <ellipse cx="33.5" cy="42" rx="2.8" ry="2.2" fill="#8a5a2b"/>
+  <circle cx="31" cy="31" r="1.9" fill="#c8a978"/>
+  <!-- suds -->
+  <circle cx="47" cy="17" r="9" fill="#bfe6f5" stroke="#fff" stroke-width="2.4"/>
+  <circle cx="44" cy="14" r="2.6" fill="#fff" opacity="0.9"/>
+  <circle cx="54" cy="31" r="5" fill="#bfe6f5" stroke="#fff" stroke-width="2"/>
+  <circle cx="36" cy="9" r="3.6" fill="#bfe6f5" stroke="#fff" stroke-width="1.6"/>
+</svg>
