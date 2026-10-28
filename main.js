@@ -980,15 +980,18 @@ function soak(w) {
     logEvent('soaked', t);
     closePanel();
     layoutTub();
-    setTimeout(() => {
-      sfx.plop();
-      const at = SPOTS[spot].clone().setY(TUB.water);
-      spawn(at, { n: 12, color: 0xa8dcff, speed: 1.6, gravity: 6, size: [0.03, 0.07], life: 0.7 });
-      spawn(at, { n: 6, speed: 0.6, size: [0.06, 0.12], life: 1.2 });
-    }, 600);
+    splashTub(spot, 600);
     settleSink();
   }
   render();
+}
+function splashTub(spot, delay) {
+  setTimeout(() => {
+    sfx.plop();
+    const at = SPOTS[spot].clone().setY(TUB.water);
+    spawn(at, { n: 12, color: 0xa8dcff, speed: 1.6, gravity: 6, size: [0.03, 0.07], life: 0.7 });
+    spawn(at, { n: 6, speed: 0.6, size: [0.06, 0.12], life: 1.2 });
+  }, delay);
 }
 const elapsed = (since) => {
   const m = Math.max(1, Math.round((Date.now() - since) / 60000));
@@ -1993,13 +1996,73 @@ function setGlow(w, amount) {
   });
 }
 
+// Dragging a dish between the sink and the tub. The dish floats on a plane above the counter,
+// under the cursor; where the pointer meets the counter decides the drop.
+const DRAG_Y = 1.4;
+const dragPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -DRAG_Y);
+const counterPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+function rayAt(clientX, clientY, plane) {
+  pointer.set((clientX / innerWidth) * 2 - 1, -(clientY / innerHeight) * 2 + 1);
+  raycaster.setFromCamera(pointer, camera);
+  return raycaster.ray.intersectPlane(plane, new THREE.Vector3());
+}
+const over = (at, x, z, w, d) => at && Math.abs(at.x - x) < w / 2 + 0.3 && Math.abs(at.z - z) < d / 2 + 0.3;
+function dropTarget(at, t) {
+  if (over(at, TUB.x, TUB.z, TUB.w, TUB.d)) return t.soak || freeSpot() !== undefined ? 'tub' : 'full';
+  if (over(at, 0, 0, SINK.w, SINK.d)) return 'sink';
+  return null;
+}
+const DROP_HINT = { tub: (t) => (t.soak ? 'Move it in the tub' : 'Soak'), full: () => "Tub's full", sink: (t) => (t.soak ? 'Back in the sink' : 'Move it here') };
+function dragDish(w, e) {
+  const t = taskById(w.userData.taskId);
+  const at = rayAt(e.clientX, e.clientY, dragPlane);
+  if (at) moveTo(w, at, new THREE.Quaternion().setFromEuler(new THREE.Euler(0, t.rotY || 0, 0)), 0.08, easeOut);
+  const target = dropTarget(rayAt(e.clientX, e.clientY, counterPlane), t);
+  tooltip.textContent = target ? DROP_HINT[target](t) : 'Drop it in the sink or the tub';
+  tooltip.style.left = e.clientX + 'px';
+  tooltip.style.top = e.clientY + 'px';
+  tooltip.classList.remove('hidden');
+  canvas.style.cursor = 'grabbing';
+}
+// Nearest free tub spot to a point (a dish already soaking may keep its own).
+function nearestSpot(at, t) {
+  const taken = new Set(soaking().filter((s) => s !== t).map((s) => s.soak.spot));
+  return [...SPOTS.keys()].filter((i) => !taken.has(i))
+    .sort((a, b) => Math.hypot(SPOTS[a].x - at.x, SPOTS[a].z - at.z) - Math.hypot(SPOTS[b].x - at.x, SPOTS[b].z - at.z))[0];
+}
+function dropDish(w, e) {
+  const t = taskById(w.userData.taskId);
+  const at = rayAt(e.clientX, e.clientY, counterPlane);
+  const target = dropTarget(at, t);
+  tooltip.classList.add('hidden');
+  canvas.style.cursor = 'default';
+  if (target === 'tub') {
+    const spot = nearestSpot(at, t);
+    if (t.soak) t.soak.spot = spot;
+    else { t.soak = { since: Date.now(), spot }; logEvent('soaked', t); }
+    splashTub(spot, 450);
+  } else if (target === 'sink') {
+    if (t.soak) { t.soak = null; logEvent('taken-out', t); }
+    const size = w.userData.size, r = Math.max(size.x, size.z) / 2;
+    const mx = Math.max(0, SINK.w / 2 - r * 0.8 - 0.1), mz = Math.max(0, SINK.d / 2 - r * 0.8 - 0.1);
+    Object.assign(t, { x: THREE.MathUtils.clamp(at.x, -mx, mx), z: THREE.MathUtils.clamp(at.z, -mz, mz), pv: PILE_VERSION });
+    setTimeout(() => sfx.clink(METAL.has(t.type)), 350);
+  } else if (target === 'full') showToast("The tub's full. Wash or take one out first.");
+  layoutTub();
+  settleSink();
+  render();
+}
+
 canvas.addEventListener('pointermove', (e) => {
   if (washing) return;
   if (press) {
     const dx = e.clientX - press.x, dy = e.clientY - press.y;
     if (!press.moved && Math.hypot(e.clientX - press.x0, e.clientY - press.y0) > 5) press.moved = true;
     const held = inspecting || heldProp;
-    if (press.moved && held) {
+    if (press.moved && !held && press.dish) {
+      if (!press.dragging) { press.dragging = true; setHover(null); sfx.whoosh(); }
+      dragDish(press.dish, e);
+    } else if (press.moved && held) {
       const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
       const up = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
       held.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(up, dx * 0.01));
@@ -2026,10 +2089,17 @@ canvas.addEventListener('pointerdown', (e) => {
   if (washing) return;
   canvas.setPointerCapture(e.pointerId);
   press = { x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, moved: false };
+  if (!inspecting && !heldProp) press.dish = pickAny(e.clientX, e.clientY).dish || null;
+});
+// A drag the browser interrupted (e.g. a system gesture): put the dish back.
+canvas.addEventListener('pointercancel', () => {
+  if (press?.dragging) { tooltip.classList.add('hidden'); layoutTub(); settleSink(); }
+  press = null;
 });
 canvas.addEventListener('pointerup', (e) => {
   const p = press;
   press = null;
+  if (p?.dragging && !washing) { dropDish(p.dish, e); return; }
   if (!p || p.moved || washing) return;
   // A click: pick up a dish or prop (swapping if something is already held), otherwise set down.
   const { dish: w, prop, letter } = pickAny(e.clientX, e.clientY, true);
@@ -2536,6 +2606,8 @@ window.sinkful = {
   finale: async () => { if (washing) return; washing = 'finale'; document.body.classList.add('washing'); await finale(); washing = null; document.body.classList.remove('washing'); hideToast(); },
   hold: (name) => holdProp(props.find((p) => p.userData.name.toLowerCase().includes(name.toLowerCase()))),
   screenOf: (name) => { const p = props.find((q) => q.userData.name.toLowerCase().includes(name.toLowerCase())); const v = p.position.clone().project(camera); return [Math.round((v.x + 1) / 2 * innerWidth), Math.round((1 - v.y) / 2 * innerHeight)]; },
+  screenAt: (x, y, z) => { const v = new THREE.Vector3(x, y, z).project(camera); return [Math.round((v.x + 1) / 2 * innerWidth), Math.round((1 - v.y) / 2 * innerHeight)]; },
+  dishAt: (title) => { const t = tasks.find((x) => x.title === title); const w = dishes.get(t.id); return window.sinkful.screenAt(w.position.x, w.position.y + 0.2, w.position.z); },
   soak: (type) => soak(liveDishes().find((w) => taskById(w.userData.taskId).type === type)),
 };
 // #wash or #wash-pot starts a wash on load (used for screenshots).
