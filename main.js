@@ -2106,6 +2106,7 @@ function addProp(prop, name, fx) {
   pivot.userData = { prop: true, name, fx, inner: prop, home: pivot.position.clone(), size: box.getSize(new THREE.Vector3()), model: pivot };
   scene.add(pivot);
   props.push(pivot);
+  return pivot;
 }
 const propFromHit = (obj) => { while (obj && !obj.userData?.prop) obj = obj.parent; return obj; };
 
@@ -2197,6 +2198,14 @@ const SURPRISES = {
     sfx.grind();
     for (let i = 0; i < 5; i++) setTimeout(() => spawn(propPoint(p, 0.5, 0, 0.5), { n: 5, color: 0x2b2420, speed: 0.5, gravity: 5, size: [0.015, 0.03], life: 0.9, opacity: 1 }), i * 120);
     return animate(0.7, (k) => { m.rotation.y = m.userData.ry0 + easeInOut(k) * Math.PI * 2; });
+  },
+  candy(p, m) {
+    sfx.rustle();
+    const at = propPoint(p, 0.5, 0.95, 0.5);
+    for (const color of [0xf07a1a, 0x7b3fb5, 0x5fae36, 0xe0192b, 0xffd21a]) {
+      spawn(at, { n: 2, color, speed: 1.4, gravity: 7, size: [0.04, 0.07], life: 0.9, opacity: 1 });
+    }
+    return animate(0.6, (k) => { m.rotation.z = Math.sin(k * Math.PI * 4) * 0.1 * (1 - k); m.position.y = m.userData.y0 + Math.sin(k * Math.PI) * 0.12; });
   },
   boo(p, m) {
     sfx.boo();
@@ -2423,7 +2432,7 @@ const calendarFromHit = (obj) => { while (obj && obj !== wallCal) obj = obj.pare
 function pickAny(x, y, includeHeld = false) {
   const dishList = liveDishes();
   if (includeHeld && inspecting) dishList.push(inspecting);
-  const propList = props.filter((p) => includeHeld || p !== heldProp);
+  const propList = props.filter((p) => p.visible && (includeHeld || p !== heldProp));
   const hit = pick(x, y, [...dishList, ...propList, ...signLetters, ...(wallCal ? [wallCal] : [])]);
   if (!hit) return {};
   if (calendarFromHit(hit.object)) return { calendar: wallCal };
@@ -2918,6 +2927,73 @@ let theme = localStorage.getItem(THEME_KEY) || (() => {
 })();
 let spookyCounterTex = null;
 
+// A purple bowl heaped with candy: wrapped sweets, candy corn, mini bars and two lollipops.
+// Every candy is merged into one vertex-coloured mesh, so the whole pile is a single draw call.
+// It's a counter prop (pick it up, click for a surprise) that applyTheme shows only for Halloween.
+const candyBowl = (function buildCandyBowl() {
+  const group = new THREE.Group();
+  const profile = [[0, 0.01], [0.3, 0.01], [0.42, 0.08], [0.5, 0.28], [0.53, 0.36], [0.5, 0.37], [0.46, 0.3], [0.38, 0.12], [0, 0.08]]
+    .map(([x, y]) => new THREE.Vector2(x, y));
+  const bowl = new THREE.Mesh(new THREE.LatheGeometry(profile, 40), new THREE.MeshPhysicalMaterial({ color: 0x6b3fa0, roughness: 0.3, clearcoat: 0.9, clearcoatRoughness: 0.15 }));
+  group.add(bowl);
+
+  let seed = 7;
+  const rand = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  const WRAPPERS = [0xf07a1a, 0x7b3fb5, 0x5fae36, 0xe0192b, 0xffd21a, 0x2b2433, 0xff5fa2];
+  const parts = [];
+  const put = (geo, color, matrix) => {
+    const gg = geo.index ? geo.toNonIndexed() : geo.clone();
+    gg.applyMatrix4(matrix);
+    const n = gg.attributes.position.count, cols = new Float32Array(n * 3);
+    const c = new THREE.Color();
+    for (let i = 0; i < n; i++) {
+      c.set(typeof color === 'function' ? color(geo, i) : color);
+      cols.set([c.r, c.g, c.b], i * 3);
+    }
+    gg.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+    parts.push(gg);
+  };
+  const ball = new THREE.SphereGeometry(1, 10, 8).toNonIndexed();
+  const twist = new THREE.ConeGeometry(0.035, 0.05, 6).toNonIndexed();
+  const corn = new THREE.ConeGeometry(0.045, 0.11, 10).toNonIndexed();
+  const bar = new THREE.BoxGeometry(0.15, 0.04, 0.07).toNonIndexed();
+  const stick = new THREE.CylinderGeometry(0.008, 0.008, 0.3, 6).toNonIndexed();
+  // Candy corn: yellow base, orange middle, white tip (by height in the cone's own space).
+  const cornColor = (geo, i) => { const y = geo.attributes.position.getY(i); return y > 0.02 ? 0xfdf6e3 : y > -0.02 ? 0xf07a1a : 0xffc61a; };
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), one = new THREE.Vector3(1, 1, 1);
+  for (let i = 0; i < 34; i++) {
+    const a = rand() * Math.PI * 2, r = Math.sqrt(rand()) * 0.4;
+    const pos = new THREE.Vector3(Math.cos(a) * r, 0.25 + (1 - (r / 0.42) ** 2) * 0.14 + rand() * 0.03, Math.sin(a) * r);
+    q.setFromEuler(e.set(rand() * 6, rand() * 6, rand() * 6));
+    const kind = i % 3;
+    if (kind === 0) { // wrapped sweet: a ball with a twist at each end
+      const col = WRAPPERS[Math.floor(rand() * WRAPPERS.length)];
+      put(ball, col, m4.compose(pos, q, new THREE.Vector3(0.07, 0.05, 0.05)));
+      for (const side of [-1, 1]) {
+        const off = new THREE.Vector3(side * 0.085, 0, 0).applyQuaternion(q).add(pos);
+        const tq = q.clone().multiply(new THREE.Quaternion().setFromEuler(e.set(0, 0, side * Math.PI / 2)));
+        put(twist, col, m4.compose(off, tq, one));
+      }
+    } else if (kind === 1) {
+      put(corn, cornColor, m4.compose(pos, q, one));
+    } else {
+      put(bar, WRAPPERS[Math.floor(rand() * WRAPPERS.length)], m4.compose(pos, q, one));
+    }
+  }
+  for (const [x, z, col, lean] of [[0.12, -0.1, 0xe0192b, 0.25], [-0.14, 0.06, 0x7b3fb5, -0.3]]) { // lollipops
+    const tilt = new THREE.Quaternion().setFromEuler(e.set(lean * 0.6, 0, lean));
+    const base = new THREE.Vector3(x, 0.3, z);
+    put(stick, 0xfdf6e3, m4.compose(base.clone().add(new THREE.Vector3(0, 0.15, 0).applyQuaternion(tilt)), tilt, one));
+    put(ball, col, m4.compose(base.clone().add(new THREE.Vector3(0, 0.33, 0).applyQuaternion(tilt)), tilt, new THREE.Vector3(0.08, 0.08, 0.035)));
+  }
+  const pile = new THREE.Mesh(mergeGeometries(parts), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.35 }));
+  for (const gg of parts) gg.dispose();
+  group.add(pile);
+  group.traverse((o) => { if (o.isMesh) o.castShadow = o.receiveShadow = true; });
+  group.position.set(-1.75, 0, -4.25);
+  return addProp(group, 'Candy bowl', 'candy');
+})();
+
 const halloweenDecor = (function buildHalloweenDecor() {
   const g = new THREE.Group();
   g.visible = false;
@@ -3054,6 +3130,8 @@ function applyTheme(name) {
   sun.color.set(t.sun[0]); sun.intensity = t.sun[1];
   signLetters.forEach((l, i) => l.material.color.set(t.sign[i % t.sign.length]));
   halloweenDecor.visible = spooky;
+  if (!spooky && heldProp === candyBowl) dropProp();
+  candyBowl.visible = spooky;
   stepHalloween(performance.now() / 1000);
   document.body.classList.toggle('halloween', spooky);
   document.querySelector('meta[name=theme-color]')?.setAttribute('content', t.ui);
