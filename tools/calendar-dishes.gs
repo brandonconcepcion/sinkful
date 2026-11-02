@@ -96,9 +96,15 @@ function syncSink({ calendar = false, goals = false }) {
       if (changed && (readGist(gist).state.rev || 0) !== (state.rev || 0)) continue;
       // Dishes you moved in Sinkful: tell Notion, then remember what it now says.
       for (const p of goalSync.pushes) {
-        setGoalStatus(notion, p.task.notion.pageId, p.status);
+        try {
+          setGoalStatus(notion, p.task.notion.pageId, p.status);
+        } catch (err) {
+          // Don't let one goal block the whole sync; it's retried next run.
+          console.warn(`Notion: couldn't set "${p.task.title}" -> ${p.status || '(blank)'}: ${err.message}`);
+          continue;
+        }
         p.task.notion.status = p.status;
-        console.log(`Notion: "${p.task.title}" -> ${p.status}`);
+        console.log(`Notion: "${p.task.title}" -> ${p.status || '(blank)'}`);
       }
       const files = {};
       // calendar.json tells the site when the last calendar sync ran (and keeps the URL it saved there).
@@ -246,7 +252,9 @@ function goalSchema(properties) {
       if (!names[key] || /^(done|in progress|not started)$/i.test(o.name)) names[key] = o.name;
     }
   }
-  if (!names.done || !names.progress || !names.todo) throw new Error(`Status needs a to-do, an in-progress and a done option (found: ${Object.keys(groupOf).join(', ')})`);
+  if (!names.done || !names.progress) throw new Error(`Status needs an in-progress and a done option (found: ${Object.keys(groupOf).join(', ')})`);
+  // No to-do option: a blank status means not started.
+  names.todo = names.todo || null;
   return { title: title.name, status: status.name, statusType: status.type, category: category && category.name, week: week && week.name, note: note && note.name, names, groupOf };
 }
 
@@ -262,7 +270,8 @@ function queryGoals({ token, id }) {
 }
 
 function setGoalStatus({ token, schema }, pageId, statusName) {
-  const value = schema.statusType === 'status' ? { status: { name: statusName } } : { select: { name: statusName } };
+  const option = statusName ? { name: statusName } : null; // null clears it (blank = not started)
+  const value = schema.statusType === 'status' ? { status: option } : { select: option };
   notionFetch(token, `pages/${pageId}`, 'patch', { properties: { [schema.status]: value } });
 }
 
@@ -273,13 +282,13 @@ function readGoal(page, schema) {
   const pick = (name) => (name && p[name] && p[name].select ? p[name].select.name : '');
   const category = pick(schema.category);
   const details = [category, pick(schema.week), schema.note ? plainText(p[schema.note].rich_text) : ''].filter(Boolean);
-  const statusName = status ? status.name : schema.names.todo;
+  const statusName = status ? status.name : schema.names.todo; // null when blank and there's no to-do option
   const week = (pick(schema.week).match(/\d+/) || [])[0];
   return {
     pageId: page.id,
     title: plainText(p[schema.title].title) || 'Untitled goal',
     status: statusName,
-    group: schema.groupOf[statusName] || 'todo',
+    group: (statusName && schema.groupOf[statusName]) || 'todo',
     category,
     week: week ? Number(week) : null, // the site keeps other weeks' goals in its cabinet
     notes: [...details, 'Goal from Notion'].join(' · '),
