@@ -16,7 +16,9 @@ A to-do list you wash. Every task is a dish in the sink.
 - The background blurs (depth of field) while a dish is being washed.
 - **Edit a task** with the ✎ Edit button on a held dish (or `E`), or the pencil next to it in the list: change its title, notes, size or urgency. A new size or urgency rebuilds the 3D dish to match. Undoable.
 - **Bulk actions** in each panel header: sink **wash all** / **clear**, tub **wash all** / **take out**, rack **put away**, plus the trash button top-left to clear everything (sink and tub emptied, rack put away). Every bulk action shows an **Undo** toast for 7 seconds.
-- **Halloween mode** (pumpkin button, top-left): a dusky purple kitchen with bats on the wall, cobwebs, a dangling spider, flickering candles, string lights under the sign, a couple more pumpkins and a bowl of candy you can pick up (click it again and candy hops out). It's on by default from mid-October through Halloween; each device remembers your choice. The jack-o'-lantern on the counter stays year-round (click it twice for a boo).
+- **Holiday themes** (button top-left, only shown while a holiday is in season): each device remembers if you switch one off for the season. Out of season a theme is archived: its code stays, but it doesn't show until next year. Preview any of them in the console with `sinkful.theme('halloween')`, `sinkful.theme('thanksgiving')` or `sinkful.theme()` for the regular kitchen.
+  - **Thanksgiving** (Nov 1 through the Sunday after Thanksgiving, leaf button): an olive wall and butcher-block counter, a roast turkey (click it twice: gobble gobble and steam), a pumpkin pie (whipped cream), harvest pumpkins, a leaf wreath, a leaf garland under the sign, "GIVE THANKS" bunting and leaves drifting down.
+  - **Halloween** (Oct 15 to 31, archived): a dusky purple kitchen with bats, cobwebs, a dangling spider, flickering candles, string lights, pumpkins, a jack-o'-lantern (click it twice for a boo) and a candy bowl.
 - **Put away** clears the rack. Tasks are saved in `localStorage`.
 
 ## Run

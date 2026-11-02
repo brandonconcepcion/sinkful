@@ -46,7 +46,8 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #d9e4e2; }
 .list h2 .ico { display: inline-block; width: 15px; height: 15px; vertical-align: -3px; color: #3d8fc4; }
 .icon-btn .ico { width: 20px; height: 20px; color: var(--muted); }
 .icon-btn.on .ico { color: #e8741c; }
-body.halloween { --accent: #d9621a; }
+body.theme-halloween { --accent: #d9621a; }
+body.theme-thanksgiving { --accent: #b5532a; }
 .act span .ico { width: 15px; height: 15px; }
 .check .ico { width: 13px; height: 13px; margin: auto; }
 .dot.soak .ico { width: 13px; height: 13px; color: #3d8fc4; }

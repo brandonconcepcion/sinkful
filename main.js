@@ -536,11 +536,6 @@ async function buildDecor() {
   hang.rotation.x = 0.06;
   for (const m of [top, hang]) { m.castShadow = m.receiveShadow = true; scene.add(m); }
 
-  // Jack-o'-lantern between the cutting board and the cactus.
-  const lantern = makePumpkin({ r: 0.55, carved: true });
-  lantern.position.set(-3.62, 0, -4.05);
-  lantern.rotation.y = 0.12;
-  addProp(lantern, "Jack-o'-lantern", 'boo');
 }
 
 // ---------------------------------------------------------------------------
@@ -2207,6 +2202,17 @@ const SURPRISES = {
     }
     return animate(0.6, (k) => { m.rotation.z = Math.sin(k * Math.PI * 4) * 0.1 * (1 - k); m.position.y = m.userData.y0 + Math.sin(k * Math.PI) * 0.12; });
   },
+  gobble(p, m) {
+    sfx.gobble();
+    const at = propPoint(p, 0.45, 0.9, 0.5);
+    for (let i = 0; i < 5; i++) setTimeout(() => spawn(at, { n: 3, speed: 0.35, size: [0.06, 0.12], life: 1.4, opacity: 0.45 }), i * 120); // steam
+    return animate(0.7, (k) => { m.position.y = m.userData.y0 + Math.abs(Math.sin(k * Math.PI * 4)) * 0.08 * (1 - k); });
+  },
+  whip(p, m) {
+    sfx.squirt();
+    spawn(propPoint(p, 0.5, 1, 0.5), { n: 10, color: 0xfffaf0, speed: 0.9, gravity: 4, size: [0.04, 0.08], life: 0.9, opacity: 1 });
+    return animate(0.45, (k) => { const q = Math.sin(k * Math.PI) * 0.2; m.scale.set(1 + q * 0.4, 1 - q, 1 + q * 0.4); });
+  },
   boo(p, m) {
     sfx.boo();
     const at = propPoint(p, 0.5, 0.9, 0.5);
@@ -2810,6 +2816,7 @@ const ICONS = {
   muted: '<path d="M11 5 6 9H2v6h4l5 4z"/><path d="m22 9-6 6M16 9l6 6"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
+  leaf: '<path d="M12 21v-7"/><path d="M12 14 7.5 9.5M12 14l4.5-4.5"/><path d="M12 3l1.6 3.2 3.4-1-1 3.6 3.5 1.2-3 2.2.9 3.3-3.4-.6L12 17l-2-2.1-3.4.6.9-3.3-3-2.2 3.5-1.2-1-3.6 3.4 1z"/>',
   pumpkin: '<path d="M12 7.5c-1.6-1-3.3-1-5 0C4.5 9 4 12 4.6 15c.6 3 2.6 5 5 5 .9 0 1.7-.3 2.4-.7.7.4 1.5.7 2.4.7 2.4 0 4.4-2 5-5 .6-3 .1-6-2.4-7.5-1.7-1-3.4-1-5 0z"/><path d="M12 7.5c-1.3 2.5-1.3 9.3 0 11.8"/><path d="M12 7.5V5.5c0-1 .6-2 1.8-2.4"/>',
   trash: '<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/>',
 };
@@ -2905,31 +2912,45 @@ function hash(s) { let h = 2166136261; for (const c of s) h = Math.imul(h ^ c.ch
 function mulberry32(a) { return () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 
 // ---------------------------------------------------------------------------
-// Halloween theme: dusky colours, a brighter flickering jack-o'-lantern, and decor that only
-// shows up for it (bats, cobwebs, a dangling spider, candles, string lights, more pumpkins).
-// The pumpkin button (top left) toggles it and each device remembers the choice; with no choice
-// saved, it's on from mid-October through Halloween.
+// Seasonal themes. Each holiday theme has a season: while it's in season, the theme button
+// (top left) switches between it and the regular kitchen, and it's on unless you turned it off
+// this season (each device remembers). Out of season a theme is archived: its code stays here,
+// but nothing shows it until its season comes round again. Preview any of them with
+// sinkful.theme('halloween') in the console.
 // ---------------------------------------------------------------------------
-const THEME_KEY = 'sinkful.theme';
-const THEMES = {
-  classic: {
-    background: 0xd9e4e2, wall: 0x9cc7bd, hemi: [0xffffff, 0x8a9a96, 0.6], sun: [0xfff4e0, 2.2],
-    sign: SIGN_COLORS, lantern: 0, glow: 0.7, ui: '#2f8f7a',
-  },
-  halloween: {
-    background: 0x241c30, wall: 0x3b2e5a, hemi: [0xcbb9ff, 0x3a2c48, 0.6], sun: [0xffe2c4, 1.9],
-    sign: [0xf07a1a, 0x7b3fb5, 0x5fae36, 0xf07a1a, 0x2b2433, 0x7b3fb5, 0xf07a1a], lantern: 1.6, glow: 1.5, ui: '#d9621a',
-  },
-};
-let theme = localStorage.getItem(THEME_KEY) || (() => {
-  const d = new Date();
-  return d.getMonth() === 9 && d.getDate() >= 15 ? 'halloween' : 'classic';
-})();
-let spookyCounterTex = null;
+const THEME_KEY = 'sinkful.theme'; // "off:<theme>" once you've switched this season's theme off
 
+// Collects coloured copies of small geometries and merges them into one vertex-coloured mesh,
+// so a pile of candy or a wreath of leaves is a single draw call.
+function colorMerge() {
+  const parts = [];
+  const c = new THREE.Color();
+  return {
+    put(geo, color, matrix) {
+      const src = geo.index ? geo.toNonIndexed() : geo;
+      const gg = src.clone().applyMatrix4(matrix);
+      const n = gg.attributes.position.count, cols = new Float32Array(n * 3);
+      for (let i = 0; i < n; i++) {
+        c.set(typeof color === 'function' ? color(src, i) : color);
+        cols.set([c.r, c.g, c.b], i * 3);
+      }
+      gg.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+      parts.push(gg);
+    },
+    mesh(material) {
+      const m = new THREE.Mesh(mergeGeometries(parts), material);
+      for (const gg of parts) gg.dispose();
+      m.castShadow = m.receiveShadow = true;
+      return m;
+    },
+  };
+}
+
+// --- Halloween (archived after October): bats, cobwebs, a dangling spider, candles, string
+// lights, pumpkins, a jack-o'-lantern and a candy bowl. ---
 // A purple bowl heaped with candy: wrapped sweets, candy corn, mini bars and two lollipops.
 // Every candy is merged into one vertex-coloured mesh, so the whole pile is a single draw call.
-// It's a counter prop (pick it up, click for a surprise) that applyTheme shows only for Halloween.
+// It's a counter prop (pick it up, click for a surprise) that only Halloween shows.
 const candyBowl = (function buildCandyBowl() {
   const group = new THREE.Group();
   const profile = [[0, 0.01], [0.3, 0.01], [0.42, 0.08], [0.5, 0.28], [0.53, 0.36], [0.5, 0.37], [0.46, 0.3], [0.38, 0.12], [0, 0.08]]
@@ -2940,19 +2961,7 @@ const candyBowl = (function buildCandyBowl() {
   let seed = 7;
   const rand = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
   const WRAPPERS = [0xf07a1a, 0x7b3fb5, 0x5fae36, 0xe0192b, 0xffd21a, 0x2b2433, 0xff5fa2];
-  const parts = [];
-  const put = (geo, color, matrix) => {
-    const gg = geo.index ? geo.toNonIndexed() : geo.clone();
-    gg.applyMatrix4(matrix);
-    const n = gg.attributes.position.count, cols = new Float32Array(n * 3);
-    const c = new THREE.Color();
-    for (let i = 0; i < n; i++) {
-      c.set(typeof color === 'function' ? color(geo, i) : color);
-      cols.set([c.r, c.g, c.b], i * 3);
-    }
-    gg.setAttribute('color', new THREE.BufferAttribute(cols, 3));
-    parts.push(gg);
-  };
+  const { put, mesh } = colorMerge();
   const ball = new THREE.SphereGeometry(1, 10, 8).toNonIndexed();
   const twist = new THREE.ConeGeometry(0.035, 0.05, 6).toNonIndexed();
   const corn = new THREE.ConeGeometry(0.045, 0.11, 10).toNonIndexed();
@@ -2986,9 +2995,7 @@ const candyBowl = (function buildCandyBowl() {
     put(stick, 0xfdf6e3, m4.compose(base.clone().add(new THREE.Vector3(0, 0.15, 0).applyQuaternion(tilt)), tilt, one));
     put(ball, col, m4.compose(base.clone().add(new THREE.Vector3(0, 0.33, 0).applyQuaternion(tilt)), tilt, new THREE.Vector3(0.08, 0.08, 0.035)));
   }
-  const pile = new THREE.Mesh(mergeGeometries(parts), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.35 }));
-  for (const gg of parts) gg.dispose();
-  group.add(pile);
+  group.add(mesh(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.35 })));
   group.traverse((o) => { if (o.isMesh) o.castShadow = o.receiveShadow = true; });
   group.position.set(-1.75, 0, -4.25);
   return addProp(group, 'Candy bowl', 'candy');
@@ -3097,17 +3104,23 @@ const halloweenDecor = (function buildHalloweenDecor() {
   return g;
 })();
 
-// Flicker: 0..1-ish noise that never repeats in an obvious way.
+// The jack-o'-lantern, between the cutting board and the cactus.
+const jackOLantern = (() => {
+  const lantern = makePumpkin({ r: 0.55, carved: true });
+  lantern.position.set(-3.62, 0, -4.05);
+  lantern.rotation.y = 0.12;
+  return addProp(lantern, "Jack-o'-lantern", 'boo');
+})();
+
+
+// Flicker: -1..1 noise that never repeats in an obvious way.
 const flicker = (t, seed = 0) => 0.5 * Math.sin(t * 13 + seed) + 0.3 * Math.sin(t * 7.3 + seed * 2.1) + 0.2 * Math.sin(t * 23 + seed * 3.7);
 function stepHalloween(t) {
-  const th = THEMES[theme];
-  const spooky = theme === 'halloween';
   for (const [i, l] of lanterns.entries()) {
-    const f = spooky ? 1 + 0.14 * flicker(t, i) : 1;
-    l.light.intensity = (th.lantern + (l.flare || 0)) * f;
-    l.mat.emissiveIntensity = (th.glow + (l.flare || 0) * 0.6) * f;
+    const f = 1 + 0.14 * flicker(t, i);
+    l.light.intensity = (1.6 + (l.flare || 0)) * f;
+    l.mat.emissiveIntensity = (1.5 + (l.flare || 0) * 0.6) * f;
   }
-  if (!spooky) return;
   const { bats, spider, thread, flames, SPIDER_TOP } = halloweenDecor.userData;
   bats.forEach((b, i) => { b.position.y = b.userData.y + Math.sin(t * 1.1 + i * 1.7) * 0.06; b.rotation.z = b.userData.rz + Math.sin(t * 0.8 + i) * 0.05; });
   flames.forEach((f, i) => { f.scale.y = 0.11 * (1 + 0.25 * flicker(t * 1.3, i + 5)); });
@@ -3117,36 +3130,338 @@ function stepHalloween(t) {
   thread.scale.y = SPIDER_TOP - thread.position.y;
 }
 
+// --- Thanksgiving: a butcher-block counter, a warm amber wall, a roast turkey, a pumpkin pie,
+// harvest pumpkins, a leaf wreath and garland, "GIVE THANKS" bunting, and leaves drifting down. ---
+const LEAF_COLORS = [0xb5321f, 0xd9631e, 0xe8a22a, 0x9c4a1f, 0xc9821f];
+const leafGeo = (() => {
+  // A maple leaf, tip up, about one unit tall.
+  const half = [[0.1, 0.7], [0.28, 0.82], [0.27, 0.5], [0.62, 0.62], [0.5, 0.32], [0.78, 0.24], [0.4, 0.05], [0.46, -0.18], [0.08, -0.06], [0.04, -0.4]];
+  const shape = new THREE.Shape();
+  shape.moveTo(0, 1);
+  for (const [x, y] of half) shape.lineTo(x, y);
+  shape.lineTo(0, -0.42);
+  for (const [x, y] of [...half].reverse()) shape.lineTo(-x, y);
+  return new THREE.ShapeGeometry(shape).translate(0, -0.3, 0);
+})();
+const leafMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8, side: THREE.DoubleSide });
+
+function woodTexture() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 512;
+  const g = c.getContext('2d');
+  const tones = ['#a8703f', '#b57f4a', '#9a6437', '#ad7643', '#a06a3b', '#b37c47', '#956034', '#a97240'];
+  const rand = mulberry32(11);
+  for (let p = 0; p < 8; p++) { // planks run along the counter
+    g.fillStyle = tones[p];
+    g.fillRect(0, p * 64, 512, 64);
+    g.strokeStyle = 'rgba(70, 40, 15, 0.16)';
+    g.lineWidth = 1.2;
+    for (let k = 0; k < 9; k++) {
+      const y0 = p * 64 + 4 + rand() * 56, amp = 1 + rand() * 3, freq = 0.01 + rand() * 0.02, ph = rand() * 6;
+      g.beginPath();
+      for (let x = 0; x <= 512; x += 8) g.lineTo(x, y0 + Math.sin(x * freq + ph) * amp);
+      g.stroke();
+    }
+    g.fillStyle = 'rgba(60, 35, 12, 0.35)';
+    g.fillRect(0, p * 64, 512, 1.5); // seam between planks
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.anisotropy = 4;
+  return tex;
+}
+
+// Roast turkey on a platter, with parsley, orange slices and cranberries.
+const turkey = (function buildTurkey() {
+  const group = new THREE.Group();
+  const china = new THREE.MeshPhysicalMaterial({ color: 0xf4efe4, roughness: 0.25, clearcoat: 0.8 });
+  const platter = new THREE.Group();
+  platter.scale.z = 0.7;
+  const dish = new THREE.Mesh(new THREE.CylinderGeometry(0.68, 0.6, 0.05, 40), china);
+  dish.position.y = 0.025;
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.66, 0.025, 8, 48), china);
+  rim.rotation.x = Math.PI / 2;
+  rim.position.y = 0.05;
+  platter.add(dish, rim);
+  group.add(platter);
+
+  const glaze = new THREE.MeshPhysicalMaterial({ color: 0xa9561e, roughness: 0.45, clearcoat: 0.7, clearcoatRoughness: 0.3 });
+  const glazeDark = new THREE.MeshPhysicalMaterial({ color: 0x8a4116, roughness: 0.5, clearcoat: 0.5 });
+  const bone = new THREE.MeshStandardMaterial({ color: 0xf6f0e4, roughness: 0.6 });
+  const part = (geo, mat, parent, pos, scale, rot) => {
+    const m = new THREE.Mesh(geo, mat);
+    m.position.set(...pos);
+    if (scale) m.scale.set(...scale);
+    if (rot) m.rotation.set(...rot);
+    parent.add(m);
+    return m;
+  };
+  part(smoothSphereGeo, glaze, group, [0.02, 0.28, 0], [0.42, 0.26, 0.32]);    // body
+  part(smoothSphereGeo, glaze, group, [-0.14, 0.33, 0], [0.3, 0.23, 0.27]);    // breast
+  for (const side of [-1, 1]) {
+    part(smoothSphereGeo, glazeDark, group, [-0.06, 0.26, side * 0.29], [0.18, 0.08, 0.1], [0, 0, -0.2]); // wing
+    part(smoothSphereGeo, glaze, group, [0.22, 0.27, side * 0.23], [0.17, 0.13, 0.13]);                  // thigh
+    const leg = new THREE.Group();
+    leg.position.set(0.3, 0.3, side * 0.21);
+    leg.rotation.set(side * 0.25, 0, -1.0);
+    group.add(leg);
+    part(new THREE.CapsuleGeometry(0.075, 0.18, 6, 14), glaze, leg, [0, 0.13, 0]);
+    part(new THREE.CylinderGeometry(0.022, 0.022, 0.09, 8), bone, leg, [0, 0.34, 0]);
+    part(new THREE.CylinderGeometry(0.045, 0.03, 0.07, 10), bone, leg, [0, 0.41, 0]); // paper frill
+  }
+
+  const { put, mesh } = colorMerge();
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler();
+  const rand = mulberry32(5);
+  const sprig = new THREE.SphereGeometry(1, 8, 6);
+  const slice = new THREE.CylinderGeometry(0.08, 0.08, 0.02, 16);
+  for (let i = 0; i < 14; i++) { // parsley around the edge
+    const a = (i / 14) * Math.PI * 2 + rand() * 0.2;
+    put(sprig, i % 2 ? 0x5f8f3a : 0x7aa84a, m4.compose(new THREE.Vector3(Math.cos(a) * 0.5, 0.07, Math.sin(a) * 0.33), q.identity(), new THREE.Vector3(0.09, 0.04, 0.08)));
+  }
+  for (const a of [0.5, 2.3, 3.7, 5.4]) { // orange slices, propped up
+    q.setFromEuler(e.set(0.9, a, 0));
+    put(slice, 0xf29a2e, m4.compose(new THREE.Vector3(Math.cos(a) * 0.53, 0.1, Math.sin(a) * 0.35), q, new THREE.Vector3(1, 1, 1)));
+  }
+  for (let i = 0; i < 14; i++) { // cranberries in two little heaps
+    const [cx, cz] = i < 7 ? [-0.5, 0.12] : [0.48, -0.14];
+    put(sprig, 0xa8122a, m4.compose(new THREE.Vector3(cx + (rand() - 0.5) * 0.14, 0.09 + rand() * 0.04, cz + (rand() - 0.5) * 0.12), q.identity(), new THREE.Vector3(0.035, 0.035, 0.035)));
+  }
+  group.add(mesh(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.5 })));
+  group.traverse((o) => { if (o.isMesh) o.castShadow = o.receiveShadow = true; });
+  group.position.set(8.55, 0, -4.0);
+  group.rotation.y = -0.15;
+  return addProp(group, 'Roast turkey', 'gobble');
+})();
+
+// Pumpkin pie with a crimped crust and whipped cream.
+const pie = (function buildPie() {
+  const group = new THREE.Group();
+  const plate = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.44, 0.04, 40), new THREE.MeshPhysicalMaterial({ color: 0xdfe8ec, roughness: 0.25, clearcoat: 0.8 }));
+  plate.position.y = 0.02;
+  const crust = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.36, 0.12, 40), new THREE.MeshStandardMaterial({ color: 0xd9a55f, roughness: 0.75 }));
+  crust.position.y = 0.1;
+  const filling = new THREE.Mesh(new THREE.CylinderGeometry(0.39, 0.39, 0.02, 40), new THREE.MeshStandardMaterial({ color: 0xb85a1c, roughness: 0.45 }));
+  filling.position.y = 0.165;
+  group.add(plate, crust, filling);
+  const { put, mesh } = colorMerge();
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion();
+  const ball = new THREE.SphereGeometry(1, 10, 8);
+  for (let i = 0; i < 28; i++) { // crimped edge
+    const a = (i / 28) * Math.PI * 2;
+    put(ball, 0xe3b474, m4.compose(new THREE.Vector3(Math.cos(a) * 0.4, 0.17, Math.sin(a) * 0.4), q.identity(), new THREE.Vector3(0.05, 0.035, 0.05)));
+  }
+  const cream = 0xfffaf0;
+  put(ball, cream, m4.compose(new THREE.Vector3(0, 0.21, 0), q, new THREE.Vector3(0.13, 0.07, 0.13)));
+  put(new THREE.ConeGeometry(0.08, 0.14, 12), cream, m4.compose(new THREE.Vector3(0, 0.3, 0), q, new THREE.Vector3(1, 1, 1)));
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2 + 0.3;
+    put(ball, cream, m4.compose(new THREE.Vector3(Math.cos(a) * 0.26, 0.19, Math.sin(a) * 0.26), q, new THREE.Vector3(0.05, 0.035, 0.05)));
+  }
+  group.add(mesh(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6 })));
+  group.traverse((o) => { if (o.isMesh) o.castShadow = o.receiveShadow = true; });
+  group.position.set(-1.75, 0, -4.25);
+  return addProp(group, 'Pumpkin pie', 'whip');
+})();
+
+// A harvest pumpkin with a little green gourd, where the jack-o'-lantern sits at Halloween.
+const harvest = (() => {
+  const group = new THREE.Group();
+  const big = makePumpkin({ r: 0.42, colors: ['#d9741f', '#ec9437', '#9c4a12'] });
+  const gourd = makePumpkin({ r: 0.2, colors: ['#4f6b2a', '#6f8f3a', '#33461a'] });
+  gourd.position.set(0.25, 0, 0.5);
+  group.add(big, gourd);
+  group.position.set(-3.62, 0, -4.05);
+  return addProp(group, 'Harvest pumpkins', 'wobble');
+})();
+
+const thanksgivingDecor = (function buildThanksgivingDecor() {
+  const g = new THREE.Group();
+  g.visible = false;
+  const rand = mulberry32(23);
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler();
+  const leafColor = () => LEAF_COLORS[Math.floor(rand() * LEAF_COLORS.length)];
+  const { put, mesh } = colorMerge();
+
+  // Leaf wreath on the left of the backsplash, with acorns and berries.
+  const W = { x: -6.6, y: 4.4, z: -4.95, r: 0.6 };
+  for (let i = 0; i < 36; i++) {
+    const a = (i / 36) * Math.PI * 2;
+    const r = W.r + (rand() - 0.5) * 0.16;
+    q.setFromEuler(e.set(0, 0, a - Math.PI / 2 + (rand() - 0.5) * 0.9));
+    const s = 0.24 + rand() * 0.1;
+    put(leafGeo, leafColor(), m4.compose(new THREE.Vector3(W.x + Math.cos(a) * r, W.y + Math.sin(a) * r, W.z + 0.02 + rand() * 0.05), q, new THREE.Vector3(s, s, s)));
+  }
+  const ball = new THREE.SphereGeometry(1, 10, 8);
+  for (const a of [0.3, 1.4, 2.6, 3.5, 4.6, 5.7]) {
+    const p = new THREE.Vector3(W.x + Math.cos(a) * W.r, W.y + Math.sin(a) * W.r, W.z + 0.1);
+    put(ball, 0x8a5a2b, m4.compose(p, q.identity(), new THREE.Vector3(0.055, 0.07, 0.055)));                       // acorn
+    put(ball, 0x5a3a1e, m4.compose(p.clone().add(new THREE.Vector3(0, 0.05, 0)), q, new THREE.Vector3(0.06, 0.03, 0.06))); // its cap
+    put(ball, 0xa8122a, m4.compose(p.clone().add(new THREE.Vector3(0.1, -0.06, 0.02)), q, new THREE.Vector3(0.03, 0.03, 0.03))); // berry
+  }
+
+  // Leaf garland drooping under the sign shelf.
+  const curve = new THREE.CatmullRomCurve3([new THREE.Vector3(-3.1, 2.84, -4.42), new THREE.Vector3(0, 2.5, -4.36), new THREE.Vector3(3.1, 2.84, -4.42)]);
+  for (let i = 0; i < 22; i++) {
+    const p = curve.getPoint((i + 0.5) / 22);
+    q.setFromEuler(e.set(-0.4, 0, Math.PI + (rand() - 0.5) * 1.2)); // hanging, tip down
+    const s = 0.17 + rand() * 0.06;
+    put(leafGeo, leafColor(), m4.compose(p.setY(p.y - 0.05).setZ(p.z + 0.02), q, new THREE.Vector3(s, s, s)));
+  }
+
+  // A few leaves scattered on the counter.
+  for (const [x, z] of [[-8.9, -3.0], [-5.6, -3.2], [-4.4, -4.6], [-2.3, -3.4], [-0.35, -4.5], [1.0, -3.6], [3.35, -4.7], [5.0, -3.3], [6.5, -3.4], [9.3, -3.1]]) {
+    q.setFromEuler(e.set(-Math.PI / 2, 0, rand() * Math.PI * 2));
+    const s = 0.24 + rand() * 0.08;
+    put(leafGeo, leafColor(), m4.compose(new THREE.Vector3(x, 0.006, z), q, new THREE.Vector3(s, s, s)));
+  }
+  const leaves = mesh(leafMat);
+  leaves.castShadow = false;
+  g.add(leaves);
+  const twine = new THREE.MeshStandardMaterial({ color: 0x8a6a42, roughness: 0.9 });
+  g.add(new THREE.Mesh(new THREE.TubeGeometry(curve, 40, 0.012, 4), twine));
+
+  // "GIVE THANKS" bunting across the wall above the sign. One texture atlas, one mesh.
+  const TEXT = 'GIVE THANKS';
+  const flagsText = TEXT.replace(/ /g, '');
+  const N = flagsText.length, CELL = 128;
+  const atlas = document.createElement('canvas');
+  atlas.width = CELL * N; atlas.height = CELL;
+  const ag = atlas.getContext('2d');
+  const FLAG_COLORS = ['#b5432a', '#d9822b', '#c99a2e', '#6f7f35', '#8a4b2a'];
+  [...flagsText].forEach((ch, i) => {
+    const x = i * CELL;
+    ag.fillStyle = FLAG_COLORS[i % FLAG_COLORS.length];
+    ag.beginPath(); ag.moveTo(x, 0); ag.lineTo(x + CELL, 0); ag.lineTo(x + CELL / 2, CELL); ag.closePath(); ag.fill();
+    ag.fillStyle = '#fbf3e4';
+    ag.font = '800 54px ui-rounded, "SF Pro Rounded", system-ui, sans-serif';
+    ag.textAlign = 'center';
+    ag.fillText(ch, x + CELL / 2, 58);
+  });
+  const atlasTex = new THREE.CanvasTexture(atlas);
+  atlasTex.colorSpace = THREE.SRGBColorSpace;
+  atlasTex.anisotropy = 4;
+  const B = { y: 5.3, sag: 0.3, z: -4.94, slot: 0.76, w: 0.6, h: 0.62 };
+  const span = (TEXT.length - 1) * B.slot;
+  const stringY = (x) => B.y - B.sag * (1 - (2 * x / span) ** 2);
+  const pos = [], uv = [];
+  let flag = 0;
+  [...TEXT].forEach((ch, i) => {
+    if (ch === ' ') return;
+    const x = -span / 2 + i * B.slot, y = stringY(x);
+    const u0 = flag / N, u1 = (flag + 1) / N;
+    pos.push(x - B.w / 2, y, B.z, x + B.w / 2, y, B.z, x, y - B.h, B.z);
+    uv.push(u0, 1, u1, 1, (u0 + u1) / 2, 0);
+    flag++;
+  });
+  const flagGeo = new THREE.BufferGeometry();
+  flagGeo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  flagGeo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  flagGeo.computeVertexNormals();
+  const flags = new THREE.Mesh(flagGeo, new THREE.MeshStandardMaterial({ map: atlasTex, roughness: 0.9, side: THREE.DoubleSide }));
+  flags.receiveShadow = true;
+  const string = new THREE.CatmullRomCurve3([-1, -0.5, 0, 0.5, 1].map((k) => new THREE.Vector3(k * (span / 2 + 0.4), stringY(k * (span / 2 + 0.4)) + 0.01, B.z + 0.01)));
+  g.add(flags, new THREE.Mesh(new THREE.TubeGeometry(string, 40, 0.012, 4), twine));
+
+  // One more little pumpkin by the plant.
+  const small = makePumpkin({ r: 0.3, colors: ['#e3dac6', '#f6f1e4', '#a89c82'] });
+  small.position.set(-8.45, 0, -3.5);
+  g.add(small);
+
+  // Leaves drifting down in front of the wall (one instanced mesh, moved in stepThanksgiving).
+  const falling = new THREE.InstancedMesh(leafGeo, new THREE.MeshStandardMaterial({ roughness: 0.8, side: THREE.DoubleSide }), 8);
+  falling.frustumCulled = false; // the instances move, so the mesh's bounds would go stale
+  falling.userData.leaves = Array.from({ length: 8 }, (_, i) => {
+    falling.setColorAt(i, new THREE.Color(LEAF_COLORS[i % LEAF_COLORS.length]));
+    return { x: -9 + i * 2.5 + rand(), z: -4.6 + rand() * 0.9, speed: 0.22 + rand() * 0.12, phase: rand() * 10, spin: 0.6 + rand() * 0.8, s: 0.22 + rand() * 0.08 };
+  });
+  g.add(falling);
+
+  g.userData = { falling };
+  scene.add(g);
+  return g;
+})();
+
+function stepThanksgiving(t) {
+  const { falling } = thanksgivingDecor.userData;
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), v = new THREE.Vector3(), sc = new THREE.Vector3();
+  const TOP = 6.2;
+  falling.userData.leaves.forEach((l, i) => {
+    const y = TOP - ((t * l.speed + l.phase) % TOP);
+    v.set(l.x + Math.sin(t * 0.7 + l.phase) * 0.45, y, l.z);
+    q.setFromEuler(e.set(Math.sin(t * 1.1 + l.phase) * 0.9, t * l.spin, Math.sin(t * 1.3 + l.phase) * 0.6));
+    falling.setMatrixAt(i, m4.compose(v, q, sc.setScalar(l.s * Math.min(1, y / 0.5)))); // shrink away as it lands
+  });
+  falling.instanceMatrix.needsUpdate = true;
+}
+
+const THEMES = {
+  classic: { background: 0xd9e4e2, wall: 0x9cc7bd, hemi: [0xffffff, 0x8a9a96, 0.6], sun: [0xfff4e0, 2.2], sign: SIGN_COLORS, ui: '#2f8f7a' },
+  halloween: {
+    label: 'Halloween', icon: 'pumpkin', enter: () => sfx.boo(),
+    season: (d) => d.getMonth() === 9 && d.getDate() >= 15,
+    background: 0x241c30, wall: 0x3b2e5a, hemi: [0xcbb9ff, 0x3a2c48, 0.6], sun: [0xffe2c4, 1.9],
+    sign: [0xf07a1a, 0x7b3fb5, 0x5fae36, 0xf07a1a, 0x2b2433, 0x7b3fb5, 0xf07a1a], ui: '#d9621a',
+    counter: () => speckleTexture('#3d3645', ['#4b4354', '#2e2935', '#5a4b70', '#4b4354', '#2e2935', '#5a4b70', '#c8641c']),
+    decor: halloweenDecor, props: [jackOLantern, candyBowl], step: stepHalloween,
+  },
+  thanksgiving: {
+    label: 'Thanksgiving', icon: 'leaf', enter: () => sfx.gobble(),
+    // November 1st through the Sunday after Thanksgiving (the fourth Thursday).
+    season: (d) => d.getMonth() === 10 && d.getDate() <= 25 + ((11 - new Date(d.getFullYear(), 10, 1).getDay()) % 7),
+    background: 0x3f2c1d, wall: 0x7a8549, hemi: [0xfff0dc, 0x7a5a3a, 0.6], sun: [0xffd6a0, 2.2],
+    sign: [0xb5432a, 0xd9822b, 0xc99a2e, 0x6f7f35, 0x8a4b2a, 0xd9822b, 0xb5432a], ui: '#b5532a',
+    counter: woodTexture, decor: thanksgivingDecor, props: [turkey, pie, harvest], step: stepThanksgiving,
+  },
+};
+const inSeason = () => Object.keys(THEMES).find((k) => THEMES[k].season?.(new Date())) || null;
+let theme = 'classic';
+
 function applyTheme(name) {
   theme = name;
   const t = THEMES[name];
-  const spooky = name === 'halloween';
   scene.background.set(t.background);
   wallMat.color.set(t.wall);
-  counterMat.map = spooky
-    ? (spookyCounterTex ||= speckleTexture('#3d3645', ['#4b4354', '#2e2935', '#5a4b70', '#4b4354', '#2e2935', '#5a4b70', '#c8641c']))
-    : counterTex;
+  counterMat.map = t.counter ? (t.counterTex ||= t.counter()) : counterTex;
   hemi.color.set(t.hemi[0]); hemi.groundColor.set(t.hemi[1]); hemi.intensity = t.hemi[2];
   sun.color.set(t.sun[0]); sun.intensity = t.sun[1];
   signLetters.forEach((l, i) => l.material.color.set(t.sign[i % t.sign.length]));
-  halloweenDecor.visible = spooky;
-  if (!spooky && heldProp === candyBowl) dropProp();
-  candyBowl.visible = spooky;
-  stepHalloween(performance.now() / 1000);
-  document.body.classList.toggle('halloween', spooky);
+  for (const [key, other] of Object.entries(THEMES)) {
+    const on = key === name;
+    if (other.decor) other.decor.visible = on;
+    for (const p of other.props || []) {
+      if (!on && heldProp === p) dropProp();
+      p.visible = on;
+    }
+    document.body.classList.toggle(`theme-${key}`, on);
+  }
+  t.step?.(performance.now() / 1000);
   document.querySelector('meta[name=theme-color]')?.setAttribute('content', t.ui);
-  const btn = $('theme');
-  btn.classList.toggle('on', spooky);
-  btn.title = spooky ? 'Halloween mode is on (click for the regular kitchen)' : 'Halloween mode';
+  paintThemeButton();
   invalidate();
 }
+function paintThemeButton() {
+  const btn = $('theme');
+  const season = inSeason();
+  btn.classList.toggle('hidden', !season);
+  if (!season) return;
+  btn.innerHTML = icon(THEMES[season].icon);
+  btn.classList.toggle('on', theme === season);
+  btn.title = theme === season ? `${THEMES[season].label} mode is on (click for the regular kitchen)` : `${THEMES[season].label} mode`;
+}
 $('theme').onclick = () => {
-  const next = theme === 'halloween' ? 'classic' : 'halloween';
-  localStorage.setItem(THEME_KEY, next);
-  if (next === 'halloween') sfx.boo();
-  applyTheme(next);
+  const season = inSeason();
+  if (!season) return;
+  const on = theme !== season;
+  if (on) localStorage.removeItem(THEME_KEY); else localStorage.setItem(THEME_KEY, `off:${season}`);
+  if (on) THEMES[season].enter?.();
+  applyTheme(on ? season : 'classic');
 };
-applyTheme(theme);
+{
+  const season = inSeason();
+  applyTheme(season && localStorage.getItem(THEME_KEY) !== `off:${season}` ? season : 'classic');
+}
 
 // ---------------------------------------------------------------------------
 // Boot
@@ -3160,7 +3475,7 @@ renderer.setAnimationLoop(() => {
   stepActives(dt);
   stepParticles(dt);
   stepTub(dt, performance.now() / 1000);
-  stepHalloween(performance.now() / 1000);
+  THEMES[theme].step?.(performance.now() / 1000);
   applyView();
   placeDishActions();
   placePropLabel();
@@ -3171,7 +3486,7 @@ renderer.setAnimationLoop(() => {
   const now = performance.now();
   const moving = tweens.size || actives.size || inspecting || heldProp || press || washing || dof.amount > 0.01;
   const ambient = particles.length || soaking().length;
-  const interval = moving ? 0 : ambient ? 33 : theme === 'halloween' ? 66 : Infinity; // candles flicker at 15 fps
+  const interval = moving ? 0 : ambient ? 33 : THEMES[theme].step ? 66 : Infinity; // holiday decor moves at 15 fps
   if (!needsRender && now - lastFrame < interval) return;
   // Ambient frames (bobbing suds, rising bubbles) move nothing that casts a shadow, so they
   // reuse the last shadow map; anything else (tweens, drags, washes, changes) redraws it.
@@ -3232,6 +3547,7 @@ window.sinkful = {
   ageSoak: (hours) => { for (const t of soaking()) t.soak.since -= hours * 3600 * 1000; render(); },
   debug: () => ({ swirl: +swirl.material.opacity.toFixed(2), level: +(sinkWater.scale.y).toFixed(2), water: sinkWater.visible, funnel: funnel.visible, particles: particles.length, actives: actives.size }),
   finale: async () => { if (washing) return; washing = 'finale'; document.body.classList.add('washing'); await finale(); washing = null; document.body.classList.remove('washing'); hideToast(); },
+  theme: (name = 'classic') => applyTheme(name), // preview any theme, archived ones too (not saved)
   hold: (name) => holdProp(props.find((p) => p.userData.name.toLowerCase().includes(name.toLowerCase()))),
   screenOf: (name) => { const p = props.find((q) => q.userData.name.toLowerCase().includes(name.toLowerCase())); const v = p.position.clone().project(camera); return [Math.round((v.x + 1) / 2 * innerWidth), Math.round((1 - v.y) / 2 * innerHeight)]; },
   // Rough CPU cost of the hot paths: a full frame (with/without the shadow pass) and a hover hit-test.

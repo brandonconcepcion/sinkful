@@ -255,3 +255,9 @@ export function boo() {
   tone(390, { type: 'triangle', to: 220, at: 0.4, peak: 0.12, attack: 0.1, decay: 0.7 });
   tone(523, { to: 784, peak: 0.04, attack: 0.2, decay: 0.4 });
 }
+
+// A quick "gobble gobble" for the turkey: wobbling square-wave chirps.
+export function gobble() {
+  if (!ready()) return;
+  for (let i = 0; i < 6; i++) tone(560 - i * 25, { type: 'square', to: 380 - i * 20, at: i * 0.075 + (i > 2 ? 0.12 : 0), peak: 0.035, attack: 0.008, decay: 0.06 });
+}
