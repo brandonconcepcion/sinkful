@@ -743,6 +743,177 @@ function refreshCalendarFace() {
   wallCal.userData.face = tex;
   invalidate();
 }
+
+// ---------------------------------------------------------------------------
+// Goals cabinet: a glass-front wall cabinet beside the calendar. Notion goals for this week sit in
+// the sink; goals from other weeks wait in here. Click it to open the doors and a list of what's
+// inside, grouped by week; take any goal out into the sink, or put one back from its dish panel.
+// ---------------------------------------------------------------------------
+const GOAL_WEEK_ONE = new Date(2026, 8, 28); // Monday of Week 1 (so Nov 2, 2026 starts Week 6)
+const goalWeek = (d = new Date()) => Math.floor((new Date(d).setHours(0, 0, 0, 0) - GOAL_WEEK_ONE.getTime()) / (7 * 86400000)) + 1;
+// A goal waits in the cabinet unless it's for this week, soaking, washed, or you took it out (t.cabinet === false).
+// t.cabinet === true puts a this-week goal back in.
+const inCabinet = (t) => t.source === 'notion' && !t.doneAt && !t.soak && (t.cabinet ?? (t.week != null && t.week !== goalWeek()));
+const cabinetTasks = () => tasks.filter(inCabinet);
+
+const CAB = { x: 8.45, y: 2.95, z: -4.8, w: 2.0, h: 1.75, d: 0.36, header: 0.3, lean: 0.38 };
+let cabinet = null;
+function cabinetLabel(week) {
+  const c = document.createElement('canvas');
+  c.width = 512; c.height = 64;
+  const g = c.getContext('2d');
+  g.fillStyle = '#b8935e'; g.fillRect(0, 0, 512, 64);
+  g.fillStyle = '#fbf3e4';
+  g.font = '800 44px ui-rounded, "SF Pro Rounded", system-ui, sans-serif';
+  g.textAlign = 'center';
+  g.fillText(`GOALS · WEEK ${week}`, 256, 48);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  return tex;
+}
+function buildCabinet() {
+  const group = new THREE.Group();
+  const wood = new THREE.MeshStandardMaterial({ color: 0xd2a676, roughness: 0.65 });
+  const inside = new THREE.MeshStandardMaterial({ color: 0xe9d9bf, roughness: 0.8 });
+  const { w, h, d, header } = CAB;
+  const body = h - header;
+  const part = (geo, mat, x, y, z, parent = group) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); parent.add(m); return m; };
+  part(new THREE.BoxGeometry(w, h, 0.04), inside, 0, h / 2, -d / 2 + 0.02);                   // back
+  for (const sx of [-1, 1]) part(new THREE.BoxGeometry(0.06, h, d), wood, sx * (w / 2 - 0.03), h / 2, 0); // sides
+  part(new THREE.BoxGeometry(w + 0.12, 0.07, d + 0.08), wood, 0, h + 0.035, 0.02);             // top, with a lip
+  part(new THREE.BoxGeometry(w, 0.06, d), wood, 0, 0.03, 0);                                   // bottom
+  for (const y of [body / 3, (2 * body) / 3]) part(new THREE.BoxGeometry(w - 0.12, 0.03, d - 0.06), inside, 0, y, 0); // shelves
+  const label = part(new THREE.PlaneGeometry(w - 0.12, header - 0.04), new THREE.MeshStandardMaterial({ map: cabinetLabel(goalWeek()), roughness: 0.7 }), 0, body + header / 2, d / 2 + 0.002);
+  part(new THREE.BoxGeometry(w - 0.12, 0.03, 0.03), wood, 0, body, d / 2 - 0.01);              // rail under the label
+
+  // Plates stacked on the shelves, one per goal inside (up to 30).
+  const plateGeo = new THREE.CylinderGeometry(0.2, 0.17, 0.035, 20);
+  const plates = new THREE.InstancedMesh(plateGeo, new THREE.MeshStandardMaterial({ color: 0xfbf7ef, roughness: 0.35 }), 30);
+  plates.count = 0;
+  group.add(plates);
+
+  // Two glass doors, hinged at the outer edges.
+  const glass = new THREE.MeshPhysicalMaterial({ color: 0xdff1f5, roughness: 0.05, transparent: true, opacity: 0.22, depthWrite: false });
+  const brass = new THREE.MeshStandardMaterial({ color: 0xc9a24a, metalness: 0.9, roughness: 0.3 });
+  const doors = [-1, 1].map((side) => {
+    const hinge = new THREE.Group();
+    hinge.position.set(side * (w / 2 - 0.02), 0, d / 2);
+    group.add(hinge);
+    const dw = w / 2 - 0.02, cx = -side * dw / 2;
+    const stile = new THREE.BoxGeometry(0.07, body - 0.04, 0.04), rail = new THREE.BoxGeometry(dw, 0.07, 0.04);
+    part(stile, wood, cx - dw / 2 + 0.035, body / 2, 0, hinge);
+    part(stile, wood, cx + dw / 2 - 0.035, body / 2, 0, hinge);
+    part(rail, wood, cx, 0.055, 0, hinge);
+    part(rail, wood, cx, body - 0.055, 0, hinge);
+    part(new THREE.PlaneGeometry(dw - 0.1, body - 0.14), glass, cx, body / 2, 0, hinge);
+    part(new THREE.SphereGeometry(0.035, 10, 8), brass, cx + side * (dw / 2 - 0.09), body / 2, 0.04, hinge); // knob by the middle
+    hinge.userData.side = side;
+    return hinge;
+  });
+  group.traverse((o) => { if (o.isMesh && o.material !== glass) o.castShadow = o.receiveShadow = true; });
+  // Hung from its top back edge and tipped forward a little (like the calendar) so the camera,
+  // which looks down on the counter, sees into it.
+  const mount = new THREE.Group();
+  mount.position.set(CAB.x, CAB.y + h, CAB.z - d / 2);
+  group.position.set(0, -h, d / 2);
+  mount.rotation.x = -CAB.lean;
+  mount.add(group);
+  mount.userData = { model: mount, doors, plates, label, open: 0, week: goalWeek() };
+  scene.add(mount);
+  cabinet = mount;
+  return mount;
+}
+const cabinetFromHit = (obj) => { while (obj && obj !== cabinet) obj = obj.parent; return obj; };
+
+// Stack a plate per goal inside: three shelves, two stacks each.
+function fillCabinet() {
+  if (!cabinet) return;
+  const { plates, label } = cabinet.userData;
+  const n = Math.min(cabinetTasks().length, 30);
+  const body = CAB.h - CAB.header, m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), one = new THREE.Vector3(1, 1, 1);
+  for (let i = 0; i < n; i++) {
+    const stack = i % 6, level = Math.floor(i / 6);
+    const shelfY = [0.06, body / 3 + 0.015, (2 * body) / 3 + 0.015][Math.floor(stack / 2)];
+    m4.compose(new THREE.Vector3((stack % 2 ? 0.45 : -0.45), shelfY + 0.02 + level * 0.04, -0.02), q, one);
+    plates.setMatrixAt(i, m4);
+  }
+  plates.count = n;
+  plates.instanceMatrix.needsUpdate = true;
+  const week = goalWeek();
+  if (cabinet.userData.week !== week) { // a new week: relabel
+    label.material.map.dispose();
+    label.material.map = cabinetLabel(week);
+    cabinet.userData.week = week;
+  }
+  invalidate();
+}
+function swingCabinet(open) {
+  const from = cabinet.userData.open;
+  animate(0.45, (k) => {
+    const a = from + (open - from) * easeInOut(k);
+    cabinet.userData.open = a;
+    for (const door of cabinet.userData.doors) door.rotation.y = -door.userData.side * a * 1.75;
+  });
+}
+const cabinetTip = () => {
+  const n = cabinetTasks().length;
+  return n ? `Goals cabinet · ${n} goal${n === 1 ? '' : 's'} from other weeks` : 'Goals cabinet · empty';
+};
+
+function openCabinet() {
+  if (washing) return;
+  putBack(); dropProp();
+  paintCabinetPanel();
+  $('cabinet-panel').classList.remove('hidden');
+  sfx.knock();
+  swingCabinet(1);
+}
+function closeCabinet() {
+  if ($('cabinet-panel').classList.contains('hidden')) return;
+  $('cabinet-panel').classList.add('hidden');
+  swingCabinet(0);
+}
+function paintCabinetPanel() {
+  const week = goalWeek();
+  const inside = cabinetTasks();
+  $('cab-sub').textContent = inside.length
+    ? `It's Week ${week}: this week's goals are in the sink. Take out any others you want to work on.`
+    : `It's Week ${week}. Nothing else is waiting in here.`;
+  const byWeek = new Map();
+  for (const t of inside.sort((a, b) => (a.week ?? 999) - (b.week ?? 999) || a.createdAt - b.createdAt)) {
+    const k = t.week ?? 'none';
+    if (!byWeek.has(k)) byWeek.set(k, []);
+    byWeek.get(k).push(t);
+  }
+  $('cab-list').innerHTML = [...byWeek].map(([wk, list]) => {
+    const name = wk === 'none' ? 'No week' : `Week ${wk}${wk === week ? ' · this week' : wk < week ? ' · earlier' : ''}`;
+    return `<h3><span>${name} <span class="count">${list.length}</span></span><button class="link" data-cab-all="${wk}">take out all</button></h3><ul>` +
+      list.map((t) => `<li><span class="title" title="${esc(t.title)}">${esc(t.title)}</span><button class="link" data-cab-out="${t.id}">take out</button></li>`).join('') + '</ul>';
+  }).join('');
+}
+// Out of the cabinet and into the sink.
+function takeFromCabinet(list) {
+  if (washing || !list.length) return;
+  for (const t of list) {
+    t.cabinet = false;
+    const w = makeDish(t);
+    dishes.set(t.id, w);
+    scene.add(w);
+    settleSink({ dropFrom: t.id });
+  }
+  sfx.clink(false);
+  render();
+}
+function putInCabinet(t) {
+  closePanel();
+  t.cabinet = true;
+  const w = dishes.get(t.id);
+  if (w) removeDish(w, t.id);
+  settleSink();
+  render();
+  notify(`"${t.title}" is back in the cabinet`);
+}
 async function flipCalendarPage() {
   const { flipper, sheet } = wallCal.userData;
   if (flipper.userData.flipping) return;
@@ -1194,7 +1365,7 @@ const GW = Math.ceil(SINK.w / CELL), GD = Math.ceil(SINK.d / CELL);
 
 function settleSink({ dropFrom } = {}) {
   const heights = new Float32Array(GW * GD).fill(FLOOR_Y);
-  const inSink = tasks.filter((t) => !t.doneAt && !t.soak).sort((a, b) => a.createdAt - b.createdAt);
+  const inSink = tasks.filter((t) => !t.doneAt && !t.soak && !inCabinet(t)).sort((a, b) => a.createdAt - b.createdAt);
   const placed = [];
   for (const t of inSink) {
     const w = dishes.get(t.id);
@@ -2433,13 +2604,13 @@ canvas.addEventListener('pointermove', (e) => {
     press.x = e.clientX; press.y = e.clientY;
     return;
   }
-  const { dish: w, prop, letter, calendar } = pickAny(e.clientX, e.clientY);
-  setHover(w || prop || calendar);
+  const { dish: w, prop, letter, calendar, cabinet: cab } = pickAny(e.clientX, e.clientY);
+  setHover(w || prop || calendar || cab);
   if (letter) canvas.style.cursor = 'pointer';
   else if ((inspecting || heldProp) && !w && !prop) canvas.style.cursor = 'grab';
-  if (w || prop || calendar) {
+  if (w || prop || calendar || cab) {
     const t = w && taskById(w.userData.taskId);
-    tooltip.textContent = calendar ? calendarTip() : prop ? prop.userData.name : t.soak ? `${t.title} · soaking ${elapsed(t.soak.since)}` : `${t.title} · ${DISHES[t.type].size}`;
+    tooltip.textContent = cab ? cabinetTip() : calendar ? calendarTip() : prop ? prop.userData.name : t.soak ? `${t.title} · soaking ${elapsed(t.soak.since)}` : `${t.title} · ${DISHES[t.type].size}`;
     tooltip.style.left = e.clientX + 'px';
     tooltip.style.top = e.clientY + 'px';
     tooltip.classList.remove('hidden');
@@ -2463,8 +2634,9 @@ canvas.addEventListener('pointerup', (e) => {
   if (p?.dragging && !washing) { dropDish(p.dish, e); return; }
   if (!p || p.moved || washing) return;
   // A click: pick up a dish or prop (swapping if something is already held), otherwise set down.
-  const { dish: w, prop, letter, calendar } = pickAny(e.clientX, e.clientY, true);
-  if (calendar) { putBack(); dropProp(); syncCalendar(); }
+  const { dish: w, prop, letter, calendar, cabinet: cab } = pickAny(e.clientX, e.clientY, true);
+  if (cab) { if ($('cabinet-panel').classList.contains('hidden')) openCabinet(); else closeCabinet(); }
+  else if (calendar) { putBack(); dropProp(); syncCalendar(); }
   else if (w && w !== inspecting) inspect(w);
   else if (prop) { if (prop === heldProp) surprise(prop); else holdProp(prop); }
   else if (letter) hopLetter(letter, 0, true);
@@ -2477,9 +2649,10 @@ function pickAny(x, y, includeHeld = false) {
   const dishList = liveDishes();
   if (includeHeld && inspecting) dishList.push(inspecting);
   const propList = props.filter((p) => p.visible && (includeHeld || p !== heldProp));
-  const hit = pick(x, y, [...dishList, ...propList, ...signLetters, ...(wallCal ? [wallCal] : [])]);
+  const hit = pick(x, y, [...dishList, ...propList, ...signLetters, ...(wallCal ? [wallCal] : []), ...(cabinet ? [cabinet] : [])]);
   if (!hit) return {};
   if (calendarFromHit(hit.object)) return { calendar: wallCal };
+  if (cabinetFromHit(hit.object)) return { cabinet };
   if (signLetters.includes(hit.object) || signLetters.includes(hit.object.parent)) return { letter: signLetters.includes(hit.object) ? hit.object : hit.object.parent };
   return { dish: dishFromHit(hit.object), prop: propFromHit(hit.object) };
 }
@@ -2496,6 +2669,7 @@ function inspect(w) {
   dropProp();
   setHover(null);
   tooltip.classList.add('hidden');
+  closeCabinet();
   inspecting = w;
   const t = taskById(w.userData.taskId);
   // Float the dish up in front of the camera, opening facing the viewer.
@@ -2516,6 +2690,7 @@ function fillPanel(t) {
   $('i-size').textContent = `${DISHES[t.type].label} · ${DISHES[t.type].size}`;
   $('i-grime').textContent = GRIME[t.grime].label;
   $('i-grime').style.background = '#' + new THREE.Color(GRIME[t.grime].color).lerp(new THREE.Color(0xffffff), 0.65).getHexString();
+  $('i-shelve').classList.toggle('hidden', t.source !== 'notion' || Boolean(t.soak) || Boolean(t.doneAt));
   const soakBtn = $('a-soak');
   soakBtn.disabled = !t.soak && freeSpot() === undefined;
   soakBtn.innerHTML = `<span>${icon(t.soak ? 'undo' : 'bubbles')}</span>${t.soak ? 'Take out' : soakBtn.disabled ? 'Tub full' : 'Soak'}`;
@@ -2655,7 +2830,7 @@ async function syncCalendar() {
 // ---------------------------------------------------------------------------
 // Bulk actions per area, all undoable
 // ---------------------------------------------------------------------------
-const inSinkTasks = () => tasks.filter((t) => !t.doneAt && !t.soak);
+const inSinkTasks = () => tasks.filter((t) => !t.doneAt && !t.soak && !inCabinet(t));
 const onRackTasks = () => tasks.filter((t) => t.doneAt && !t.archived);
 const plural = (n) => `${n} dish${n === 1 ? '' : 'es'}`;
 
@@ -2670,7 +2845,7 @@ function buildAllDishes() {
   dishes.clear();
   tweens.clear();
   for (const t of tasks) {
-    if (t.archived) continue;
+    if (t.archived || inCabinet(t)) continue;
     const w = makeDish(t);
     if (t.doneAt) stripGrime(w);
     dishes.set(t.id, w);
@@ -2781,7 +2956,7 @@ function putAway(silent) {
 
 // Fresh start: sink and tub tasks are removed, the rack is put away (so today's count stays).
 function clearEverything() {
-  const active = tasks.filter((t) => !t.doneAt);
+  const active = tasks.filter((t) => !t.doneAt && !inCabinet(t));
   if (busy() || (!active.length && !onRackTasks().length)) return;
   const undo = offerUndo('Cleared everything');
   putAway(true);
@@ -2820,6 +2995,14 @@ function openDialog(t) {
 }
 const openAdd = () => openDialog(null);
 const openEdit = (t) => t && !t.doneAt && openDialog(t);
+$('cab-list').addEventListener('click', (e) => {
+  const one = e.target.closest('[data-cab-out]');
+  const all = e.target.closest('[data-cab-all]');
+  if (one) takeFromCabinet([taskById(one.dataset.cabOut)].filter(Boolean));
+  else if (all) takeFromCabinet(cabinetTasks().filter((t) => String(t.week ?? 'none') === all.dataset.cabAll));
+});
+$('cab-close').onclick = closeCabinet;
+$('i-shelve').onclick = () => inspecting && putInCabinet(taskById(inspecting.userData.taskId));
 $('i-edit').onclick = () => inspecting && openEdit(taskById(inspecting.userData.taskId));
 $('add-btn').onclick = openAdd;
 addEventListener('keydown', (e) => {
@@ -2897,7 +3080,7 @@ function applyEdit(t, fields) {
 const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 function render() {
   invalidate();
-  const dirty = tasks.filter((t) => !t.doneAt && !t.soak).sort((a, b) => b.grime - a.grime || a.createdAt - b.createdAt);
+  const dirty = tasks.filter((t) => !t.doneAt && !t.soak && !inCabinet(t)).sort((a, b) => b.grime - a.grime || a.createdAt - b.createdAt);
   const done = tasks.filter((t) => t.doneAt && !t.archived);
   const inTub = soaking();
   const toGo = dirty.length + inTub.length;
@@ -2918,6 +3101,8 @@ function render() {
   $('sink-actions').classList.toggle('hidden', !dirty.length);
   $('soak-actions').classList.toggle('hidden', !inTub.length);
   $('clear-all').disabled = !toGo && !done.length;
+  fillCabinet();
+  if (!$('cabinet-panel').classList.contains('hidden')) paintCabinetPanel();
   save();
 }
 const onListClick = (e) => {
@@ -3052,7 +3237,7 @@ const halloweenDecor = (function buildHalloweenDecor() {
   shape.lineTo(0, -0.13);
   for (const [x, y] of [...half].reverse()) shape.lineTo(-x, y);
   const batGeo = new THREE.ExtrudeGeometry(shape, { depth: 0.03, bevelEnabled: false });
-  const bats = [[-8.1, 4.3, 2.2, 0.2], [-6.6, 5.0, 1.6, -0.25], [-5.0, 4.1, 1.9, 0.1], [7.7, 3.9, 1.7, -0.2], [8.9, 4.9, 2.3, 0.15]].map(([x, y, s, rz]) => {
+  const bats = [[-8.1, 4.3, 2.2, 0.2], [-6.6, 5.0, 1.6, -0.25], [-5.0, 4.1, 1.9, 0.1], [3.9, 5.2, 1.7, -0.2], [-3.9, 5.3, 1.5, 0.15]].map(([x, y, s, rz]) => {
     const bat = new THREE.Mesh(batGeo, black);
     bat.position.set(x, y, -4.97);
     bat.scale.setScalar(s);
@@ -3546,6 +3731,7 @@ renderer.setAnimationLoop(() => {
 });
 
 FIT_BOX.union(new THREE.Box3().setFromObject(buildWallCalendar()));
+FIT_BOX.union(new THREE.Box3().setFromObject(buildCabinet()));
 const [, , , sign] = await Promise.all([loadModels(), buildDecor(), loadFromRemote(), buildSign().catch(() => null)]);
 if (sign) { // make room for the sign in the home view, then drop the letters in
   sign.updateMatrixWorld(true);
@@ -3560,8 +3746,11 @@ buildAllDishes();
 render();
 paintSaveStatus();
 // A new day while the page is open (or after it sat in the background): swap in today's dailies.
+let shownWeek = goalWeek();
 function refreshDailies() {
-  if (washing || !ensureDailies()) return;
+  const newWeek = goalWeek() !== shownWeek; // this week's goals come out of the cabinet, last week's go in
+  shownWeek = goalWeek();
+  if (washing || (!ensureDailies() && !newWeek)) return;
   closePanel();
   buildAllDishes();
   render();

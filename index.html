@@ -52,7 +52,13 @@
     <p id="i-notes"></p>
     <p id="i-soak" class="soak-note"></p>
     <p class="hint">Click anywhere to set it down. Drag to turn it.<br /><kbd>Enter</kbd> done · <kbd>S</kbd> soak · <kbd>E</kbd> edit · <kbd>Esc</kbd> set down</p>
-    <div class="actions"><button id="i-toss" class="ghost danger">Toss this task</button></div>
+    <div class="actions"><button id="i-shelve" class="ghost hidden">Back in the cabinet</button><button id="i-toss" class="ghost danger">Toss this task</button></div>
+  </section>
+
+  <section id="cabinet-panel" class="hud cabinet hidden">
+    <div class="cab-head"><h2>Goals cabinet</h2><button id="cab-close" class="link">close</button></div>
+    <p id="cab-sub"></p>
+    <div id="cab-list"></div>
   </section>
 
   <dialog id="add-dialog">

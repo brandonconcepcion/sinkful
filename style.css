@@ -68,6 +68,15 @@ body.theme-thanksgiving { --accent: #b5532a; }
 .inspect h2 { margin: 8px 0 4px; font-size: 20px; }
 .inspect p { margin: 0 0 10px; color: var(--muted); font-size: 14px; white-space: pre-wrap; }
 .inspect .hint { font-size: 12px; margin-top: 8px; }
+.cabinet { left: 16px; top: 76px; width: 320px; max-height: calc(100vh - 290px); overflow: auto; padding: 14px 18px; }
+.cab-head { display: flex; justify-content: space-between; align-items: baseline; }
+.cab-head h2 { margin: 0 0 4px; font-size: 18px; }
+#cab-sub { margin: 0 0 8px; color: var(--muted); font-size: 13px; }
+.cabinet h3 { display: flex; justify-content: space-between; align-items: center; margin: 10px 0 2px; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); }
+.cabinet ul { list-style: none; margin: 0; padding: 0; }
+.cabinet li { display: flex; gap: 8px; align-items: center; justify-content: space-between; padding: 5px 6px; border-radius: 8px; font-size: 14px; }
+.cabinet li:hover { background: rgba(47, 143, 122, 0.1); }
+.cabinet li .title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .badge-row { display: flex; gap: 6px; }
 .badge { font-size: 12px; padding: 3px 8px; border-radius: 99px; background: #e8efe9; }
 

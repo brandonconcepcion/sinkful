@@ -5,7 +5,8 @@
 //      Notion "Not started"  <->  a dish in the sink
 //      Notion "In Progress"  <->  a dish soaking in the tub
 //      Notion "Done"         <->  washed
-//    Change it on either side and the other follows. A goal that's already Done the first time
+//    Change it on either side and the other follows. Each goal dish also carries its Week number;
+//    the site keeps goals from other weeks in its cabinet until you take them out. A goal that's already Done the first time
 //    it's seen is left out; tossing a goal's dish in Sinkful leaves Notion alone.
 //
 // Setup (once), at https://script.google.com:
@@ -273,12 +274,14 @@ function readGoal(page, schema) {
   const category = pick(schema.category);
   const details = [category, pick(schema.week), schema.note ? plainText(p[schema.note].rich_text) : ''].filter(Boolean);
   const statusName = status ? status.name : schema.names.todo;
+  const week = (pick(schema.week).match(/\d+/) || [])[0];
   return {
     pageId: page.id,
     title: plainText(p[schema.title].title) || 'Untitled goal',
     status: statusName,
     group: schema.groupOf[statusName] || 'todo',
     category,
+    week: week ? Number(week) : null, // the site keeps other weeks' goals in its cabinet
     notes: [...details, 'Goal from Notion'].join(' · '),
   };
 }
@@ -322,7 +325,7 @@ function reconcileGoals(state, pages, schema, now) {
     if (!t) {
       if (state.deleted[id] || g.group === 'done') return;
       const dish = {
-        id, title: g.title, type: GOAL_DISH[g.category] || 'pan', grime: GOAL_GRIME, notes: g.notes,
+        id, title: g.title, type: GOAL_DISH[g.category] || 'pan', grime: GOAL_GRIME, notes: g.notes, week: g.week,
         createdAt: now + i, updatedAt: now + i, doneAt: null, archived: false, soak: null,
         source: 'notion', notion: { pageId: g.pageId, status: g.status },
       };
@@ -334,6 +337,7 @@ function reconcileGoals(state, pages, schema, now) {
     let touched = false;
     if (t.title !== g.title && !t.doneAt) { t.title = g.title; touched = true; }
     if (t.notes !== g.notes) { t.notes = g.notes; touched = true; }
+    if ((t.week ?? null) !== g.week) { t.week = g.week; touched = true; }
     const agreed = schema.groupOf[t.notion.status] || 'todo';
     if (t.notion.waiting) {
       if (dishGroup(t) === 'todo' && agreed === 'progress') { moveDish(state, t, 'progress', now); touched = touched || Boolean(t.soak); }
