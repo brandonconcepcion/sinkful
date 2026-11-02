@@ -837,7 +837,45 @@ function mergeStates(a, b) {
   return { tasks: merged, deleted: gone };
 }
 
-// Change tracking: compare each task with how it looked at the last save.
+// Daily non-negotiables: one dish each, every day, in this order. Each day's dish has a fixed id
+// (title + date), so every device adds the same ones and merging never doubles them up. Washing
+// or tossing one is final for the day; yesterday's unwashed ones are cleared away instead of piling up.
+const DAILIES = [
+  ['Read the Bible', 'mug'],
+  ['Take Supplements', 'fork'],
+  ['Brush Teeth', 'fork'],
+  ['Exercise', 'bowl'],
+  ['Track Food', 'glass'],
+  ['Skincare / Body Care', 'glass'],
+  ['Work on something Creative', 'bowl'],
+  ['Dress Respectfully', 'fork'],
+  ['Walk / Play with the Dogs', 'plate'],
+  ['Complete at least 1 Chore', 'plate'],
+  ['Listen to 1 Album', 'bowl'],
+  ['Give a Treat to the Dogs', 'fork'],
+  ['Work on 1 Skill', 'plate'],
+  ['Read 10 pages of a book', 'mug'],
+  ['Practice a Language', 'mug'],
+];
+const dayKey = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+// Brings `tasks` up to date for today. Returns true if anything changed.
+function ensureDailies() {
+  const day = dayKey();
+  const before = tasks.length;
+  tasks = tasks.filter((t) => !t.daily || t.daily === day || t.doneAt);
+  let changed = tasks.length !== before;
+  const dayStart = new Date(new Date().setHours(0, 0, 0, 0)).getTime();
+  DAILIES.forEach(([title, type], i) => {
+    const id = `daily-${slug(title)}-${day}`;
+    if (deleted[id] || tasks.some((t) => t.id === id)) return;
+    tasks.push({ id, title, type, grime: 2, notes: 'Daily non-negotiable', daily: day, createdAt: dayStart + i, doneAt: null, archived: false });
+    changed = true;
+  });
+  return changed;
+}
+
+
 const stamps = new Map(); // id -> JSON of the task (minus updatedAt)
 const bare = (t) => { const { updatedAt, ...rest } = t; return JSON.stringify(rest); };
 function resetStamps() {
@@ -3517,9 +3555,19 @@ if (sign) { // make room for the sign in the home view, then drop the letters in
   waveSign({ drop: true });
   applyTheme(theme); // the letters exist now
 }
+ensureDailies();
 buildAllDishes();
 render();
 paintSaveStatus();
+// A new day while the page is open (or after it sat in the background): swap in today's dailies.
+function refreshDailies() {
+  if (washing || !ensureDailies()) return;
+  closePanel();
+  buildAllDishes();
+  render();
+}
+setInterval(refreshDailies, 60 * 1000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshDailies(); });
 
 // Handy for debugging in the console.
 window.sinkful = {
