@@ -1026,7 +1026,7 @@ const DAILIES = [
   ['Give a Treat to the Dogs', 'fork'],
   ['Work on 1 Skill', 'plate'],
   ['Read 10 pages of a book', 'mug'],
-  ['Practice a Language', 'mug'],
+  ['Learn something about my Culture', 'mug'],
 ];
 const dayKey = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
@@ -1034,7 +1034,9 @@ const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g
 function ensureDailies() {
   const day = dayKey();
   const before = tasks.length;
-  tasks = tasks.filter((t) => !t.daily || t.daily === day || t.doneAt);
+  // Unwashed dailies from past days, or ones no longer on the list (renamed or removed), go.
+  const today = new Set(DAILIES.map(([title]) => `daily-${slug(title)}-${day}`));
+  tasks = tasks.filter((t) => !t.daily || t.doneAt || today.has(t.id));
   let changed = tasks.length !== before;
   const dayStart = new Date(new Date().setHours(0, 0, 0, 0)).getTime();
   DAILIES.forEach(([title, type], i) => {
