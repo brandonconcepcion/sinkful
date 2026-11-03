@@ -68,7 +68,7 @@ body.theme-thanksgiving { --accent: #b5532a; }
 .inspect h2 { margin: 8px 0 4px; font-size: 20px; }
 .inspect p { margin: 0 0 10px; color: var(--muted); font-size: 14px; white-space: pre-wrap; }
 .inspect .hint { font-size: 12px; margin-top: 8px; }
-.cabinet { left: 16px; top: 76px; width: 320px; max-height: calc(100vh - 290px); overflow: auto; padding: 14px 18px; }
+.cabinet { right: 16px; top: 76px; width: 320px; max-height: calc(100vh - 290px); overflow: auto; padding: 14px 18px; }
 .cab-head { display: flex; justify-content: space-between; align-items: baseline; }
 .cab-head h2 { margin: 0 0 4px; font-size: 18px; }
 #cab-sub { margin: 0 0 8px; color: var(--muted); font-size: 13px; }

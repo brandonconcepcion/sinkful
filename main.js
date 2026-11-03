@@ -756,7 +756,7 @@ const goalWeek = (d = new Date()) => Math.floor((new Date(d).setHours(0, 0, 0, 0
 const inCabinet = (t) => t.source === 'notion' && !t.doneAt && !t.soak && (t.cabinet ?? (t.week != null && t.week !== goalWeek()));
 const cabinetTasks = () => tasks.filter(inCabinet);
 
-const CAB = { x: 8.45, y: 2.95, z: -4.8, w: 2.0, h: 1.75, d: 0.36, header: 0.3, lean: 0.38 };
+const CAB = { x: -8.45, y: 2.95, z: -4.8, w: 2.0, h: 1.75, d: 0.36, header: 0.3, lean: 0.38 };
 let cabinet = null;
 function cabinetLabel(week) {
   const c = document.createElement('canvas');
@@ -3237,7 +3237,7 @@ const halloweenDecor = (function buildHalloweenDecor() {
   shape.lineTo(0, -0.13);
   for (const [x, y] of [...half].reverse()) shape.lineTo(-x, y);
   const batGeo = new THREE.ExtrudeGeometry(shape, { depth: 0.03, bevelEnabled: false });
-  const bats = [[-8.1, 4.3, 2.2, 0.2], [-6.6, 5.0, 1.6, -0.25], [-5.0, 4.1, 1.9, 0.1], [3.9, 5.2, 1.7, -0.2], [-3.9, 5.3, 1.5, 0.15]].map(([x, y, s, rz]) => {
+  const bats = [[8.1, 4.3, 2.2, 0.2], [6.9, 5.0, 1.6, -0.25], [-5.0, 4.1, 1.9, 0.1], [3.9, 5.2, 1.7, -0.2], [-3.9, 5.3, 1.5, 0.15]].map(([x, y, s, rz]) => {
     const bat = new THREE.Mesh(batGeo, black);
     bat.position.set(x, y, -4.97);
     bat.scale.setScalar(s);
@@ -3507,8 +3507,8 @@ const thanksgivingDecor = (function buildThanksgivingDecor() {
   const leafColor = () => LEAF_COLORS[Math.floor(rand() * LEAF_COLORS.length)];
   const { put, mesh } = colorMerge();
 
-  // Leaf wreath on the left of the backsplash, with acorns and berries.
-  const W = { x: -6.6, y: 4.4, z: -4.95, r: 0.6 };
+  // Leaf wreath on the right of the backsplash, with acorns and berries.
+  const W = { x: 8.2, y: 4.2, z: -4.95, r: 0.6 };
   for (let i = 0; i < 36; i++) {
     const a = (i / 36) * Math.PI * 2;
     const r = W.r + (rand() - 0.5) * 0.16;
