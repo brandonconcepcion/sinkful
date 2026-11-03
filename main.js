@@ -2686,7 +2686,9 @@ function inspect(w) {
 
 function fillPanel(t) {
   $('i-title').textContent = t.title;
-  $('i-notes').textContent = t.notes || '';
+  $('i-notes').textContent = t.source === 'notion'
+    ? [t.category, t.week != null && `Week ${t.week}`, goalNote(t), 'Notion goal'].filter(Boolean).join(' · ')
+    : t.notes || '';
   $('i-size').textContent = `${DISHES[t.type].label} · ${DISHES[t.type].size}`;
   $('i-grime').textContent = GRIME[t.grime].label;
   $('i-grime').style.background = '#' + new THREE.Color(GRIME[t.grime].color).lerp(new THREE.Color(0xffffff), 0.65).getHexString();
@@ -2979,15 +2981,41 @@ const form = $('add-form');
 $('size-picker').innerHTML = Object.entries(DISHES).map(([k, d]) =>
   `<label><input type="radio" name="type" value="${k}" ${k === 'plate' ? 'checked' : ''} /><span>${d.label}<small>${d.size}</small></span></label>`).join('');
 let editingId = null; // set while the dialog is editing an existing task
+// Notion goals: the dialog edits a goal's category and week too (the Apps Script syncs them to
+// Notion), and can add a new goal once the sync has brought any in.
+const GOAL_CATEGORIES = ['Food', 'Hobbies', 'Media', 'Fitness', 'Spirituality'];
+const goalsOn = () => tasks.some((t) => t.source === 'notion');
+// A goal's own note. Goals synced before field editing kept "Food · Week 3 · note · Goal from Notion"
+// in their notes until the next sync replaces it; show just the note part.
+function goalNote(t) {
+  if (t.notion?.fields) return t.notes || '';
+  return (t.notes || '').split(' · ').filter((p, i) => p !== 'Goal from Notion' && !/^Week \d+$/.test(p) && !(i === 0 && GOAL_CATEGORIES.includes(p))).join(' · ');
+}
+function fillGoalFields(t) {
+  const box = $('goal-fields');
+  const goal = t ? t.source === 'notion' : goalsOn();
+  box.classList.toggle('hidden', !goal);
+  box.classList.toggle('adding', !t);
+  box.classList.remove('on');
+  if (!goal) return;
+  const cats = [...new Set([...GOAL_CATEGORIES, ...tasks.map((x) => x.source === 'notion' && x.category), t && t.category].filter(Boolean))];
+  form.category.innerHTML = '<option value="">—</option>' + cats.map((c) => `<option>${esc(c)}</option>`).join('');
+  form.category.value = (t && t.category) || '';
+  const top = Math.max(goalWeek() + 6, ...tasks.map((x) => (x.source === 'notion' && x.week) || 0));
+  form.week.innerHTML = '<option value="">—</option>' + Array.from({ length: top }, (_, i) => `<option value="${i + 1}">Week ${i + 1}${i + 1 === goalWeek() ? ' (this week)' : ''}</option>`).join('');
+  form.week.value = String(t ? t.week ?? '' : goalWeek());
+}
+form.goal.addEventListener('change', () => $('goal-fields').classList.toggle('on', form.goal.checked));
 function openDialog(t) {
   if (washing || dialog.open) return;
   form.reset();
+  fillGoalFields(t);
   editingId = t ? t.id : null;
   $('dialog-title').textContent = t ? 'Edit dish' : 'Add a dish to the sink';
   $('add-submit').textContent = t ? 'Save changes' : 'Drop it in';
   if (t) {
     form.title.value = t.title;
-    form.notes.value = t.notes || '';
+    form.notes.value = t.source === 'notion' ? goalNote(t) : t.notes || '';
     form.querySelector(`input[name=type][value=${t.type}]`).checked = true;
     form.querySelector(`input[name=grime][value="${t.grime}"]`).checked = true;
   }
@@ -3014,10 +3042,19 @@ dialog.addEventListener('close', () => {
   const title = String(data.get('title') || '').trim();
   if (!title) return;
   const fields = { title, notes: String(data.get('notes') || '').trim(), type: data.get('type'), grime: Number(data.get('grime')) };
-  if (editingId) { applyEdit(taskById(editingId), fields); return; }
-  const t = { id: uid(), ...fields, createdAt: Date.now(), doneAt: null, archived: false };
+  const editing = editingId && taskById(editingId);
+  const goal = editing ? editing.source === 'notion' : goalsOn() && form.goal.checked;
+  if (goal) {
+    fields.category = String(data.get('category') || '');
+    fields.week = data.get('week') ? Number(data.get('week')) : null;
+  }
+  if (editingId) { applyEdit(editing, fields); return; }
+  // A new goal has no Notion page yet: the Apps Script makes one on its next sync.
+  const t = { id: uid(), ...fields, createdAt: Date.now(), doneAt: null, archived: false, ...(goal && { source: 'notion', notion: { pageId: null } }) };
   tasks.push(t);
   logEvent('added', t);
+  if (goal) notify(inCabinet(t) ? `"${t.title}" is in the goals cabinet (Week ${t.week}); it'll be in Notion within 10 minutes` : `It'll be in Notion within 10 minutes`, 5000);
+  if (inCabinet(t)) { render(); return; }
   const w = makeDish(t);
   dishes.set(t.id, w);
   scene.add(w);
@@ -3047,14 +3084,20 @@ for (const el of document.querySelectorAll('[data-icon]')) el.innerHTML = icon(e
 // Save edits to a task. A new size or urgency rebuilds its 3D dish in place.
 function applyEdit(t, fields) {
   if (!t) return;
-  const changed = Object.keys(fields).filter((k) => fields[k] !== (t[k] ?? ''));
+  const changed = Object.keys(fields).filter((k) => fields[k] !== (t[k] ?? (k === 'week' ? null : '')));
   if (!changed.length) return;
   const undo = offerUndo('Saved changes');
   const from = Object.fromEntries(changed.map((k) => [k, t[k]]));
   Object.assign(t, fields);
   logEvent('edited', t, { changes: Object.fromEntries(changed.map((k) => [k, { from: from[k], to: fields[k] }])) });
+  if (changed.includes('week')) delete t.cabinet; // follow the new week (into the cabinet if it isn't this one)
   const old = dishes.get(t.id);
-  if (old && (changed.includes('type') || changed.includes('grime'))) {
+  if (old && inCabinet(t)) {
+    closePanel();
+    removeDish(old, t.id);
+    settleSink();
+    notify(`"${t.title}" moved to the goals cabinet (Week ${t.week})`);
+  } else if (old && (changed.includes('type') || changed.includes('grime'))) {
     const held = inspecting === old;
     setHover(null);
     const w = makeDish(t);

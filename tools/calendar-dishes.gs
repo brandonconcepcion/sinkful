@@ -5,7 +5,9 @@
 //      Notion "Not started"  <->  a dish in the sink
 //      Notion "In Progress"  <->  a dish soaking in the tub
 //      Notion "Done"         <->  washed
-//    Change it on either side and the other follows. Each goal dish also carries its Week number;
+//    Change it on either side and the other follows; the same goes for a goal's name, notes
+//    (the text column), category and week. Goals you add in Sinkful become Notion pages.
+//    Each goal dish also carries its Week number;
 //    the site keeps goals from other weeks in its cabinet until you take them out. A goal that's already Done the first time
 //    it's seen is left out; tossing a goal's dish in Sinkful leaves Notion alone.
 //
@@ -90,21 +92,37 @@ function syncSink({ calendar = false, goals = false }) {
     for (let attempt = 0; attempt < 3; attempt++) {
       const { state, calendar: cal } = readGist(gist);
       const added = events ? addCalendarDishes(state, events, Date.now()) : 0;
-      const goalSync = pages ? reconcileGoals(state, pages, notion.schema, Date.now()) : { changed: 0, pushes: [] };
-      const changed = added + goalSync.changed + goalSync.pushes.length;
+      const goalSync = pages ? reconcileGoals(state, pages, notion.schema, Date.now()) : { changed: 0, pushes: [], creates: [] };
+      const changed = added + goalSync.changed + goalSync.pushes.length + goalSync.creates.length;
       // Gists have no compare-and-swap: write only if nobody saved while we were working.
       if (changed && (readGist(gist).state.rev || 0) !== (state.rev || 0)) continue;
       // Dishes you moved in Sinkful: tell Notion, then remember what it now says.
+      // (One goal Notion refuses doesn't block the rest; it's retried next run.)
       for (const p of goalSync.pushes) {
+        const what = JSON.stringify(p.fields);
         try {
-          setGoalStatus(notion, p.task.notion.pageId, p.status);
+          updateGoal(notion, p.task.notion.pageId, p.fields);
         } catch (err) {
-          // Don't let one goal block the whole sync; it's retried next run.
-          console.warn(`Notion: couldn't set "${p.task.title}" -> ${p.status || '(blank)'}: ${err.message}`);
+          console.warn(`Notion: couldn't update "${p.task.title}" ${what}: ${err.message}`);
           continue;
         }
-        p.task.notion.status = p.status;
-        console.log(`Notion: "${p.task.title}" -> ${p.status || '(blank)'}`);
+        if ('status' in p.fields) p.task.notion.status = p.fields.status;
+        for (const k of GOAL_FIELDS) if (k in p.fields) p.task.notion.fields[k] = p.fields[k];
+        console.log(`Notion: "${p.task.title}" ${what}`);
+      }
+      // Goals you added in Sinkful.
+      for (const t of goalSync.creates) {
+        const status = notion.schema.names[dishGroup(t)];
+        const fields = { status, ...Object.fromEntries(GOAL_FIELDS.map((k) => [k, dishField(t, k)])) };
+        let pageId;
+        try {
+          pageId = createGoal(notion, fields);
+        } catch (err) {
+          console.warn(`Notion: couldn't add "${t.title}": ${err.message}`);
+          continue;
+        }
+        adoptPage(state, t, pageId, status, Date.now());
+        console.log(`Notion: added "${t.title}"`);
       }
       const files = {};
       // calendar.json tells the site when the last calendar sync ran (and keeps the URL it saved there).
@@ -255,7 +273,10 @@ function goalSchema(properties) {
   if (!names.done || !names.progress) throw new Error(`Status needs an in-progress and a done option (found: ${Object.keys(groupOf).join(', ')})`);
   // No to-do option: a blank status means not started.
   names.todo = names.todo || null;
-  return { title: title.name, status: status.name, statusType: status.type, category: category && category.name, week: week && week.name, note: note && note.name, names, groupOf };
+  return {
+    title: title.name, status: status.name, statusType: status.type, category: category && category.name,
+    week: week && week.name, weekOptions: week ? week.select.options.map((o) => o.name) : [], note: note && note.name, names, groupOf,
+  };
 }
 
 function queryGoals({ token, id }) {
@@ -269,10 +290,30 @@ function queryGoals({ token, id }) {
   return pages.filter((p) => !p.archived && !p.in_trash);
 }
 
-function setGoalStatus({ token, schema }, pageId, statusName) {
-  const option = statusName ? { name: statusName } : null; // null clears it (blank = not started)
-  const value = schema.statusType === 'status' ? { status: option } : { select: option };
-  notionFetch(token, `pages/${pageId}`, 'patch', { properties: { [schema.status]: value } });
+// The Notion property values for a goal's fields; only the ones given (and that the database has).
+function goalProperties(schema, fields) {
+  const props = {};
+  const text = (v) => (v ? [{ text: { content: String(v).slice(0, 2000) } }] : []);
+  const option = (name) => (name ? { name } : null); // null clears it (a blank status means not started)
+  if ('status' in fields) props[schema.status] = schema.statusType === 'status' ? { status: option(fields.status) } : { select: option(fields.status) };
+  if ('title' in fields) props[schema.title] = { title: text(fields.title || 'Untitled goal') };
+  if ('note' in fields && schema.note) props[schema.note] = { rich_text: text(fields.note) };
+  if ('category' in fields && schema.category) props[schema.category] = { select: option(fields.category) };
+  if ('week' in fields && schema.week) {
+    const n = fields.week;
+    // Reuse the column's own spelling ("Week 7"); a week it doesn't have yet gets added.
+    const name = n == null ? null : schema.weekOptions.find((o) => Number((o.match(/\d+/) || [])[0]) === n) || `Week ${n}`;
+    props[schema.week] = { select: option(name) };
+  }
+  return props;
+}
+
+function updateGoal({ token, schema }, pageId, fields) {
+  notionFetch(token, `pages/${pageId}`, 'patch', { properties: goalProperties(schema, fields) });
+}
+
+function createGoal({ token, id, schema }, fields) {
+  return notionFetch(token, 'pages', 'post', { parent: { database_id: id }, properties: goalProperties(schema, fields) }).id;
 }
 
 const plainText = (rich) => (rich || []).map((r) => r.plain_text).join('').trim();
@@ -280,19 +321,27 @@ function readGoal(page, schema) {
   const p = page.properties;
   const status = schema.statusType === 'status' ? p[schema.status].status : p[schema.status].select;
   const pick = (name) => (name && p[name] && p[name].select ? p[name].select.name : '');
-  const category = pick(schema.category);
-  const details = [category, pick(schema.week), schema.note ? plainText(p[schema.note].rich_text) : ''].filter(Boolean);
   const statusName = status ? status.name : schema.names.todo; // null when blank and there's no to-do option
   const week = (pick(schema.week).match(/\d+/) || [])[0];
   return {
     pageId: page.id,
-    title: plainText(p[schema.title].title) || 'Untitled goal',
     status: statusName,
     group: (statusName && schema.groupOf[statusName]) || 'todo',
-    category,
-    week: week ? Number(week) : null, // the site keeps other weeks' goals in its cabinet
-    notes: [...details, 'Goal from Notion'].join(' · '),
+    // The fields you can edit on either side.
+    fields: {
+      title: plainText(p[schema.title].title) || 'Untitled goal',
+      note: schema.note && p[schema.note] ? plainText(p[schema.note].rich_text) : '',
+      category: pick(schema.category),
+      week: week ? Number(week) : null, // the site keeps other weeks' goals in its cabinet
+    },
   };
+}
+const GOAL_FIELDS = ['title', 'note', 'category', 'week'];
+// A goal dish's copy of a field (the dish keeps the Notion text column as its notes).
+const dishField = (t, k) => (k === 'note' ? t.notes || '' : k === 'week' ? t.week ?? null : t[k] || '');
+function setDishField(t, k, v) {
+  if (k === 'note') t.notes = v;
+  else t[k] = v;
 }
 
 // Where a dish is: washed, soaking, or in the sink.
@@ -315,10 +364,12 @@ function moveDish(state, t, group, now) {
   if (t.notion) t.notion.waiting = !t.soak;
 }
 
-// Brings goal dishes and Notion into step. Each goal dish remembers the Notion status it last
-// agreed with (task.notion.status): if Notion's status differs from that, Notion changed; if the
-// dish's place differs from it, you moved the dish in Sinkful. If both changed, the newer change wins.
-// Returns { changed: dishes updated from Notion, pushes: [{ task, status }] to send to Notion }.
+// Brings goal dishes and Notion into step. Each goal dish remembers what it last agreed with
+// Notion: its status (task.notion.status) and its fields (task.notion.fields: name, note, category,
+// week). If Notion's value differs from that, Notion changed; if the dish's differs, you changed it in
+// Sinkful. If both changed, the newer change wins.
+// Goal dishes you add in Sinkful (no pageId yet) become new Notion pages.
+// Returns { changed: dishes updated, pushes: [{ task, fields }] to send to Notion, creates: [task] }.
 function reconcileGoals(state, pages, schema, now) {
   state.tasks = state.tasks || [];
   state.deleted = state.deleted || {};
@@ -333,10 +384,11 @@ function reconcileGoals(state, pages, schema, now) {
     const t = byId.get(id);
     if (!t) {
       if (state.deleted[id] || g.group === 'done') return;
+      const f = g.fields;
       const dish = {
-        id, title: g.title, type: GOAL_DISH[g.category] || 'pan', grime: GOAL_GRIME, notes: g.notes, week: g.week,
+        id, title: f.title, type: GOAL_DISH[f.category] || 'pan', grime: GOAL_GRIME, notes: f.note, category: f.category, week: f.week,
         createdAt: now + i, updatedAt: now + i, doneAt: null, archived: false, soak: null,
-        source: 'notion', notion: { pageId: g.pageId, status: g.status },
+        source: 'notion', notion: { pageId: g.pageId, status: g.status, fields: { ...f } },
       };
       state.tasks.push(dish);
       moveDish(state, dish, g.group, now);
@@ -344,9 +396,29 @@ function reconcileGoals(state, pages, schema, now) {
       return;
     }
     let touched = false;
-    if (t.title !== g.title && !t.doneAt) { t.title = g.title; touched = true; }
-    if (t.notes !== g.notes) { t.notes = g.notes; touched = true; }
-    if ((t.week ?? null) !== g.week) { t.week = g.week; touched = true; }
+    const out = {};
+    const notionNewer = Date.parse(page.last_edited_time) >= (t.updatedAt || 0);
+    // Dishes from before fields were tracked: take Notion's values.
+    if (!t.notion.fields) {
+      t.notion.fields = { ...g.fields };
+      for (const k of GOAL_FIELDS) setDishField(t, k, g.fields[k]);
+      touched = true;
+    }
+    for (const k of GOAL_FIELDS) {
+      const agreed = t.notion.fields[k] ?? (k === 'week' ? null : '');
+      const theirs = g.fields[k];
+      const mine = dishField(t, k);
+      const notionMoved = theirs !== agreed;
+      const sinkMoved = mine !== agreed;
+      if (notionMoved && (!sinkMoved || notionNewer)) {
+        if (mine !== theirs) setDishField(t, k, theirs);
+        t.notion.fields[k] = theirs;
+        touched = true;
+      } else if (sinkMoved) {
+        if (mine !== theirs) out[k] = mine;
+        else { t.notion.fields[k] = mine; touched = true; }
+      }
+    }
     const agreed = schema.groupOf[t.notion.status] || 'todo';
     if (t.notion.waiting) {
       if (dishGroup(t) === 'todo' && agreed === 'progress') { moveDish(state, t, 'progress', now); touched = touched || Boolean(t.soak); }
@@ -354,26 +426,51 @@ function reconcileGoals(state, pages, schema, now) {
     }
     const notionMoved = g.status !== t.notion.status;
     const sinkMoved = dishGroup(t) !== agreed && !t.notion.waiting;
-    const notionNewer = Date.parse(page.last_edited_time) >= (t.updatedAt || 0);
     if (notionMoved && (!sinkMoved || notionNewer)) {
       if (dishGroup(t) !== g.group) moveDish(state, t, g.group, now);
       t.notion.status = g.status;
       touched = true;
     } else if (sinkMoved) {
       const status = schema.names[dishGroup(t)];
-      if (status !== g.status) pushes.push({ task: t, status });
+      if (status !== g.status) out.status = status;
       else { t.notion.status = g.status; touched = true; }
     }
+    if (Object.keys(out).length) pushes.push({ task: t, fields: out });
     if (touched) { t.updatedAt = now; changed++; }
   });
   // Goals deleted from Notion: their unwashed dishes go too.
   state.tasks = state.tasks.filter((t) => {
-    if (t.source !== 'notion' || seen.has(t.id) || t.doneAt) return true;
+    if (t.source !== 'notion' || !t.notion || !t.notion.pageId || seen.has(t.id) || t.doneAt) return true;
     state.deleted[t.id] = now;
     changed++;
     return false;
   });
-  return { changed, pushes };
+  // A device that hadn't heard a new goal got its page can save the old copy back: fold it into
+  // the page's dish (so its edits still reach Notion) instead of making a second page.
+  const adopted = new Map(state.tasks.filter((t) => t.notion && t.notion.from).map((t) => [t.notion.from, t]));
+  state.tasks = state.tasks.filter((t) => {
+    const home = t.notion && !t.notion.pageId && adopted.get(t.id);
+    if (!home) return true;
+    for (const k of ['title', 'notes', 'category', 'week', 'type', 'grime', 'soak', 'doneAt']) home[k] = t[k];
+    home.updatedAt = now;
+    state.deleted[t.id] = now;
+    changed++;
+    return false;
+  });
+  const creates = state.tasks.filter((t) => t.source === 'notion' && t.notion && !t.notion.pageId);
+  return { changed, pushes, creates };
+}
+
+// A goal you added in Sinkful now has a Notion page: give its dish the page's id (so every device
+// and every later sync agree on it) and drop the old id.
+function adoptPage(state, t, pageId, status, now) {
+  const id = `notion-${pageId.replace(/-/g, '')}`;
+  state.deleted = state.deleted || {};
+  state.deleted[t.id] = now;
+  const fields = Object.fromEntries(GOAL_FIELDS.map((k) => [k, dishField(t, k)]));
+  const dish = { ...t, id, updatedAt: now, notion: { ...t.notion, pageId, from: t.id, status, fields } };
+  state.tasks = state.tasks.map((x) => (x === t ? dish : x));
+  return dish;
 }
 
 // ---------------------------------------------------------------------------
